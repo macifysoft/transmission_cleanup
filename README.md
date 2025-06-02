@@ -1,56 +1,132 @@
-# transmission_cleanup
-OVERVIEW
---------
-Transmission Cleanup is a utility that automatically organizes completed torrents from Transmission into category folders.
-It can be run manually or scheduled to run automatically at specified times.
+# Transmission Cleanup
 
-FEATURES
---------
-- Automatically organizes completed torrents into category folders (Apps, Media, Archives, Other)
-- Removes torrents from Transmission after organizing (keeps downloaded files)
-- Scheduled task for automatic cleanup
-- Secure credential storage for Transmission RPC access
+![Platforms](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows-lightgrey)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-CONFIGURATION
-------------
-- RPC URL: The URL to connect to Transmission's RPC interface (default: http://localhost:9091/transmission/rpc)
-- Download Folder: The main folder where torrents are downloaded
-- Category Folders: Subfolders for organizing files by type
-- Schedule: When the automatic cleanup should run
+Automatically organize completed Transmission downloads on both macOS and Windows platforms.
+Windows 
+![Powershell](https://github.com/user-attachments/assets/166bca48-8332-4d33-9e65-8371f9cd3e70)
 
-SCHEDULED TASK HISTORY
----------------------
-Task history may be disabled by default in Windows Task Scheduler. To enable history:
+macOS
+![Macos](https://github.com/user-attachments/assets/11c3ae53-8473-4f32-b317-b51e62fabd51)
 
-1. Using Task Scheduler GUI:
-   a. Open Task Scheduler (taskschd.msc)
-   b. Go to Task Scheduler Library
-   c. Find the "Transmission Cleanup" task
-   d. Right-click and select "Properties"
-   e. Go to the "History" tab
-   f. Click "Enable All Tasks History" in the right panel
 
-2. Using Command Line:
-   Open an elevated Command Prompt and run:
-   wevtutil set-log Microsoft-Windows-TaskScheduler/Operational /enabled:true
+## Features
 
-Enabling history allows you to track when the cleanup task ran and whether it completed successfully.
+### Cross-Platform Core Features
+- ✅ **Smart File Organization** - Automatically sorts files into categories (Apps, Media, Music, Archives, Other)
+- 🔒 **Secure Credential Storage** - Encrypted storage of Transmission RPC credentials
+- ⏰ **Flexible Scheduling** - Set daily or weekly cleanup schedules
+- 📝 **Detailed Logging** - Comprehensive logging for troubleshooting
+- ♻️ **Torrent Management** - Optional removal of completed torrents from Transmission
 
-SHORTCUTS
----------
-The following shortcuts are created in the Start Menu:
-- Run Cleanup: Manually runs the cleanup process
-- Reset Credentials: Resets the stored Transmission credentials
-- View Log File: Opens the log file in Notepad
-- Help: Opens this help file
-- Uninstall: Completely removes Transmission Cleanup
+### macOS Exclusive Features (v1.5.1)
+- 🖥️ Native GUI application
+- 🚀 LaunchAgent scheduling integration
+- 🔍 Built-in log viewer
+- 🎨 Dark/Light mode support
+- 🔄 Automatic update checking
 
-TROUBLESHOOTING
---------------
-- Check the log file for detailed error messages
-- Verify Transmission is running and accessible
-- Ensure your credentials are correct
-- Check Task Scheduler for errors if scheduled tasks aren't running
-- Make sure the download folder exists and is accessible
+### Windows Exclusive Features (v10.2.0)
+- ⚡ Self-installing PowerShell script
+- 🏁 Start Menu shortcuts
+- 🔄 Automatic retry logic
+- 🗑️ Complete self-uninstallation
+- 🛡️ Self-elevating admin privileges
 
-For additional help, please contact the script author.
+## Installation
+
+### macOS Installation
+1. Download the latest `.dmg` from Releases
+2. Open the disk image and drag the app to your Applications folder
+3. Launch the application and:
+   - Enter your Transmission RPC credentials
+   - Configure your download folders
+   - Set up your preferred schedule
+
+
+### Optional: Install via Homebrew (when available)
+```bash
+brew install --cask transmission-cleanup
+```
+
+### Windows Installation
+1. Download the TransmissionCleanup.ps1 script
+2. Right-click the file and select "Run with PowerShell"
+3. Follow the installation prompts to:
+   - Set your Transmission RPC URL
+   - Configure download folders
+   - Set up scheduling preferences
+
+## Configuration
+
+|Setting	| macOS | Windows|
+|--------|-------|--------|
+|Credentials|GUI Configuration|During first run|
+|Folders|Customizable in Settings|Set during installation|
+|Schedule |Daily/Weekly In Preferences|Daily/Weekly during setup|
+|Log Location|~/Library/Application Support|%APPDATA%\Transmission\Logs
+
+## Requirements
+
+|Componments|macOS|Windows|
+|-----------|-----|-------|
+|OS Version|macOS 10.15+|Windows 7+|
+|Transmission|2.94+|2.94+|
+|RPC Access| Enabled|Enabled|
+|Runtime|-|PowerShell 5.1+|
+
+## Usage
+
+After installation:
+
+On macOS:
+
+    Use the menu bar icon for quick access
+    Run cleanup manually from the main window
+    View logs directly in the application
+    Scheduled tasks run automatically
+
+On Windows:
+
+    Use Start Menu shortcuts:
+        "Run Cleanup Now"
+        "Reset Credentials"
+        "View Log File"
+    Scheduled tasks run automatically
+
+## Troubleshooting
+
+Common issues for both platforms:
+
+    1. Connection Errors:
+        Verify Transmission RPC is enabled
+        Check your firewall settings
+        Confirm correct credentials
+
+    2. File Permission Issues:
+        macOS: Grant Full Disk Access in System Preferences
+        Windows: Run as Administrator
+
+    3. Scheduling Problems:
+        macOS: Check launchctl list | grep transmission
+        Windows: Verify task in Task Scheduler
+
+## Uninstalling
+
+macOS: 
+Delete the application from your Applications folder Remove config files:
+
+```bash
+  rm -rf ~/Library/Application\ Support/Transmission\ Cleanup
+```
+
+Windows:
+1. Use the Start Menu "Uninstall" shortcut
+2 . Or run: 
+```bash
+  Powershell: .\TransmissionCleanup.ps1 -Uninstall
+```
+## License
+
+MIT License - See LICENSE for details.
