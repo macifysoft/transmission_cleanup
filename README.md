@@ -129,4 +129,4 @@ Windows:
 ```
 ## License
 
-MIT License - See LICENSE for details.
+MIT License - See [LICENSE](/LICENSE.md) for details.
