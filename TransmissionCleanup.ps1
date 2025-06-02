@@ -1,5 +1,7 @@
-﻿
-<#
+﻿<#
+Copyright (c) [2025] [vampiro2004]
+This software is licensed under the MIT License.
+
 .SYNOPSIS
     Transmission Auto-Cleanup with Full Automation - Final Version
 .DESCRIPTION
