@@ -4,6 +4,7 @@
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 Automatically organize completed Transmission downloads on both macOS and Windows platforms.
+
 Windows 
 ![Powershell](https://github.com/user-attachments/assets/166bca48-8332-4d33-9e65-8371f9cd3e70)
 
