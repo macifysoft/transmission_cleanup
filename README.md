@@ -124,7 +124,7 @@ Delete the application from your Applications folder Remove config files:
 
 Windows:
 1. Use the Start Menu "Uninstall" shortcut
-2 . Or run: 
+2. Or run: 
 ```bash
   Powershell: .\TransmissionCleanup.ps1 -Uninstall
 ```
