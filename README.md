@@ -45,12 +45,6 @@ macOS
    - Configure your download folders
    - Set up your preferred schedule
 
-
-### Optional: Install via Homebrew (when available)
-```bash
-brew install --cask transmission-cleanup
-```
-
 ### Windows Installation
 1. Download the TransmissionCleanup.ps1 script
 2. Right-click the file and select "Run with PowerShell"
