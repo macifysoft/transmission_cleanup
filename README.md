@@ -1,4 +1,4 @@
-# Transmission Cleanup
+# Transmission RPC Cleanup Utilites For windows and macOS
 
 ![Platforms](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-green)
