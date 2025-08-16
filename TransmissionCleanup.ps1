@@ -1,5 +1,5 @@
 ﻿<#
-Copyright (c) [2025] [vampiro2004]
+Copyright (c) [2025] [macify Software]
 This software is licensed under the MIT License.
 
 .SYNOPSIS
@@ -1665,3 +1665,4 @@ catch {
 }
 
 #endregion
+
