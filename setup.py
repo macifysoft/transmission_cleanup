@@ -10,7 +10,7 @@ OPTIONS = {
         'CFBundleIdentifier': 'com.transmissioncleanup.app',
         'CFBundleVersion': '1.3.0',
         'CFBundleShortVersionString': '1.3.0',
-        'NSHumanReadableCopyright': 'Copyright macify Software © 2025',
+        'NSHumanReadableCopyright': 'Copyright Macify Software © 2025',
         'NSHighResolutionCapable': True,
     },
     'packages': ['PyQt5'],
