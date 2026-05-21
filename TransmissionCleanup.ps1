@@ -1,7 +1,5 @@
-﻿<#
-Copyright (c) [2025] [Macify Software]
-This software is licensed under the MIT License.
-
+﻿
+<#
 .SYNOPSIS
     Transmission Auto-Cleanup with Full Automation - Final Version
 .DESCRIPTION
@@ -24,25 +22,31 @@ param (
     [ValidateRange(1,10)][int]$MaxRetries = 3,
     [ValidateRange(1,60)][int]$RetryDelay = 2,
     [switch]$WhatIf,
-    [switch]$Verbose
+    [switch]$Verbose,
+    [switch]$NoElevation
 )
 
-# Create a debug log file on the desktop for troubleshooting self-elevation issues
+
+$ScriptVersion = "10.4.2"
+# Create a debug log file in the installed Logs folder for troubleshooting self-elevation issues
 function Write-DebugLog {
     param(
         [string]$Message
     )
-    
+
     # Only write debug logs if $Verbose is specified
     if (-not $Verbose) { return }
-    
+
     try {
-        $desktopPath = [Environment]::GetFolderPath("Desktop")
-        $debugLogFile = Join-Path -Path $desktopPath -ChildPath "TransmissionCleanupDebug.log"
-        
+        $logsDir = Join-Path -Path $env:APPDATA -ChildPath "Transmission\AutoCleanup\Logs"
+        if (-not (Test-Path -LiteralPath $logsDir)) {
+            New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
+        }
+        $debugLogFile = Join-Path -Path $logsDir -ChildPath "TransmissionCleanupDebug.log"
+
         $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         $logEntry = "[$timestamp] $Message"
-        
+
         Add-Content -Path $debugLogFile -Value $logEntry -ErrorAction Stop
     }
     catch {
@@ -50,9 +54,118 @@ function Write-DebugLog {
     }
 }
 
+# Basic Wait-ForKeyPress function (full version defined later)
+function Wait-ForKeyPress {
+    param(
+        [string]$Message = "Press any key to continue..."
+    )
+    
+    Write-Host "`n$Message" -ForegroundColor Yellow
+    try {
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    }
+    catch {
+        # If ReadKey fails, use a simple timeout
+        Start-Sleep -Seconds 5
+    }
+}
+
+# Check if running from ISE or other problematic contexts and show a message
+$isISE = $Host.Name -eq "Windows PowerShell ISE Host"
+$isConsole = $Host.Name -eq "ConsoleHost"
+$hasScriptPath = -not [string]::IsNullOrEmpty($MyInvocation.MyCommand.Path)
+# Detect different execution methods
+$isRightClickExecution = ($Host.Name -eq "ConsoleHost") -and ([string]::IsNullOrEmpty($MyInvocation.InvocationName))
+$isOpenWithPowerShell = ($Host.Name -eq "ConsoleHost") -and ($MyInvocation.Line -like "*powershell*" -or $env:PSExecutionContext -like "*powershell*")
+
+if ($isISE) {
+    Write-Host "WARNING: PowerShell ISE detected. This script is not fully supported in ISE." -ForegroundColor Red
+    Write-Host "SOLUTION: Right-click the script file and select 'Run with PowerShell'" -ForegroundColor Green
+    Write-Host "Or run from a regular PowerShell prompt." -ForegroundColor Green
+    Write-Host ""
+}
+elseif ($isRightClickExecution -or $isOpenWithPowerShell) {
+    if ($isRightClickExecution) {
+        Write-Host "Detected right-click 'Run with PowerShell' execution." -ForegroundColor Green
+    } else {
+        Write-Host "Detected 'Open with > Windows PowerShell' execution." -ForegroundColor Green
+    }
+    Write-Host "This is the recommended way to run the script." -ForegroundColor Green
+    Write-Host ""
+}
+elseif ($isConsole -and -not $hasScriptPath) {
+    Write-Host "NOTICE: Script appears to be copy-pasted or running in an unusual context." -ForegroundColor Yellow
+    Write-Host "For best results, save as .ps1 file and right-click 'Run with PowerShell'" -ForegroundColor Yellow
+    Write-Host ""
+}
+
+# Add error handling for common execution problems
+$errorLogsDir = Join-Path -Path $env:APPDATA -ChildPath "Transmission\AutoCleanup\Logs"
+$errorLogPath = Join-Path -Path $errorLogsDir -ChildPath "TransmissionCleanup_Error.log"
+
+function Write-ErrorToFile {
+    param([string]$Message)
+    try {
+        if (-not (Test-Path -LiteralPath $errorLogsDir)) {
+            New-Item -ItemType Directory -Path $errorLogsDir -Force | Out-Null
+        }
+        Add-Content -Path $errorLogPath -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message" -ErrorAction SilentlyContinue
+    } catch {}
+}
+
+try {
+    Write-ErrorToFile "Script execution started - Host: $($Host.Name)"
+    Write-ErrorToFile "Invocation: $($MyInvocation.InvocationName)"
+    Write-ErrorToFile "Script Path: $($MyInvocation.MyCommand.Path)"
+    
+    # Test if we can access basic PowerShell features
+    $testPath = $env:TEMP
+    if ([string]::IsNullOrEmpty($testPath)) {
+        throw "Cannot access environment variables"
+    }
+    
+    Write-ErrorToFile "Basic PowerShell test passed"
+}
+catch {
+    $errorMsg = "PowerShell execution environment issue: $($_.Exception.Message)"
+    Write-ErrorToFile "ERROR: $errorMsg"
+    
+    Write-Host "ERROR: PowerShell execution environment issue detected." -ForegroundColor Red
+    Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "This usually happens when:" -ForegroundColor Yellow
+    Write-Host "1. Running from PowerShell ISE (not supported)" -ForegroundColor Yellow
+    Write-Host "2. Execution policy is too restrictive" -ForegroundColor Yellow
+    Write-Host "3. Running in a restricted context" -ForegroundColor Yellow
+    Write-Host "4. 'Open with PowerShell' execution issue" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "SOLUTIONS:" -ForegroundColor Green
+    Write-Host "1. Right-click the script → 'Run with PowerShell'" -ForegroundColor Green
+    Write-Host "2. Run from elevated PowerShell: powershell.exe -ExecutionPolicy Bypass -File 'script.ps1'" -ForegroundColor Green
+    Write-Host "3. Check error log: $errorLogPath" -ForegroundColor Green
+    Write-Host ""
+    
+    # Force window to stay open
+    Write-Host "Press any key to exit..." -ForegroundColor Red
+    try {
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    } catch {
+        Start-Sleep -Seconds 15
+    }
+    exit 1
+}
+
 # Self-execution wrapper for double-click elevation
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+if (-not $NoElevation -and -not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-DebugLog "Script started without admin privileges, attempting elevation"
+    Write-DebugLog "Execution Policy: $(Get-ExecutionPolicy)"
+    Write-DebugLog "PowerShell Version: $($PSVersionTable.PSVersion)"
+    Write-DebugLog "Current Location: $(Get-Location)"
+    Write-DebugLog "Host Name: $($Host.Name)"
+    Write-DebugLog "Invocation Name: $($MyInvocation.InvocationName)"
+    Write-DebugLog "Invocation Line: $($MyInvocation.Line)"
+    Write-DebugLog "Is Right-Click: $isRightClickExecution"
+    Write-DebugLog "Is Open With: $isOpenWithPowerShell"
     
     try {
         # Get the script path
@@ -68,19 +181,73 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
             # Re-launch the script with elevated privileges
             Write-DebugLog "Attempting to relaunch with admin privileges: $scriptPath"
             
-            # Create a more reliable relaunch command - REMOVED WindowStyle Hidden to ensure window is visible
-            $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+            # Build arguments preserving any original parameters
+            $argumentList = @()
+            $argumentList += "-NoProfile"
+            $argumentList += "-ExecutionPolicy", "Bypass"
+            # Enforce STA to ensure WinForms dialogs (FolderBrowserDialog) work in all launch contexts (including Open With)
+            $argumentList += "-STA"
+            
+            # Preserve original parameters except NoElevation
+            $scriptArgs = @()
+            if ($Uninstall) { $scriptArgs += "-Uninstall" }
+            if ($RunOnly) { $scriptArgs += "-RunOnly" }
+            if ($Reinitialize) { $scriptArgs += "-Reinitialize" }
+            if ($WhatIf) { $scriptArgs += "-WhatIf" }
+            if ($Verbose) { $scriptArgs += "-Verbose" }
+            if ($MaxRetries -ne 3) { $scriptArgs += "-MaxRetries $MaxRetries" }
+            if ($RetryDelay -ne 2) { $scriptArgs += "-RetryDelay $RetryDelay" }
+            
+            # Create the command to run in elevated mode
+            $scriptArgsString = $scriptArgs -join " "
+            if ($Verbose -or $WhatIf) {
+                # Keep window open for verbose/whatif mode so user can see output
+                $argumentList += "-Command", "& {& '$scriptPath' $scriptArgsString; Write-Host 'Press any key to exit...' -ForegroundColor Yellow; Read-Host}"
+            } else {
+                # Always keep window open for GUI-launched execution to see results
+                if ($isRightClickExecution -or $isOpenWithPowerShell) {
+                    $argumentList += "-Command", "& {try { & '$scriptPath' $scriptArgsString } catch { Write-Host 'Error: ' + `$_.Exception.Message -ForegroundColor Red }; Write-Host ''; Write-Host 'Execution completed. Press any key to close...' -ForegroundColor Yellow; `$null = `$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') }"
+                } else {
+                    # Normal command-line execution
+                    $argumentList += "-File", "`"$scriptPath`""
+                    if ($scriptArgsString) { $argumentList += $scriptArgsString.Split(' ') }
+                }
+            }
+            
+            $arguments = $argumentList -join " "
             Write-DebugLog "Launch arguments: $arguments"
             
             try {
-                # Launch with normal window style to ensure it's visible
-                Start-Process powershell.exe -ArgumentList $arguments -Verb RunAs
-                Write-DebugLog "Relaunch successful, exiting current instance"
+                # Use Start-Process with -Wait to ensure proper elevation
+                $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
+                $processStartInfo.FileName = "powershell.exe"
+                $processStartInfo.Arguments = $arguments
+                $processStartInfo.Verb = "RunAs"
+                $processStartInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Normal
+                $processStartInfo.UseShellExecute = $true
+                $processStartInfo.WorkingDirectory = Split-Path -Path $scriptPath -Parent
+                
+                $process = [System.Diagnostics.Process]::Start($processStartInfo)
+                if ($process) {
+                    Write-DebugLog "Elevated process started with PID: $($process.Id)"
+                    Write-DebugLog "Relaunch successful, exiting current instance"
+                } else {
+                    Write-DebugLog "Failed to start elevated process - Start() returned null"
+                    throw "Process.Start() returned null"
+                }
             }
             catch {
                 $errorMsg = "Failed to start elevated process: $($_.Exception.Message)"
                 Write-DebugLog $errorMsg
+                Write-DebugLog "Error details: $($_.Exception.GetType().FullName)"
+                Write-DebugLog "HRESULT: $($_.Exception.HResult)"
+                
+                # Show error to user
                 Write-Host $errorMsg -ForegroundColor Red
+                if ($_.Exception.HResult -eq -2147467259) {
+                    Write-Host "This usually means the UAC prompt was cancelled or failed." -ForegroundColor Yellow
+                    Write-Host "Please try running PowerShell as Administrator and then run the script." -ForegroundColor Yellow
+                }
                 Write-Host "Press any key to exit..."
                 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
             }
@@ -105,190 +272,168 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     Write-DebugLog "Exiting non-elevated instance"
     exit
 }
-
 Write-DebugLog "Script running with admin privileges"
 
 #Requires -Version 5.1
 
+
+# Early helper functions used during config bootstrap
+
+
 #region CONFIGURATION
-# Get the current script path reliably
 function Get-ScriptPath {
-    # Try multiple methods to get the script path
     $scriptPath = $null
-    
-    # Method 1: Using $MyInvocation (works in most contexts)
+
     if ($null -ne $MyInvocation.MyCommand.Path -and $MyInvocation.MyCommand.Path -ne "") {
         $scriptPath = $MyInvocation.MyCommand.Path
         Write-DebugLog "Script path found using MyInvocation.MyCommand.Path: $scriptPath"
     }
-    # Method 2: Using $PSCommandPath (works in PS 3.0+)
     elseif ($null -ne $PSCommandPath -and $PSCommandPath -ne "") {
         $scriptPath = $PSCommandPath
         Write-DebugLog "Script path found using PSCommandPath: $scriptPath"
     }
-    # Method 3: Using $script:PSCommandPath (another variant)
     elseif ($null -ne $script:PSCommandPath -and $script:PSCommandPath -ne "") {
         $scriptPath = $script:PSCommandPath
         Write-DebugLog "Script path found using script:PSCommandPath: $scriptPath"
     }
-    # Method 4: Using current location and script name
     else {
-        $scriptName = "fixed_script_final.ps1"
+        $scriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
+        if ([string]::IsNullOrWhiteSpace($scriptName)) { $scriptName = "TransmissionCleanup.ps1" }
         $possiblePath = Join-Path -Path (Get-Location).Path -ChildPath $scriptName
         if (Test-Path $possiblePath) {
             $scriptPath = $possiblePath
             Write-DebugLog "Script path found using current location and script name: $scriptPath"
         }
         else {
-            # Method 5: Fallback to a hardcoded path if all else fails
-            Write-Host "[WARN] Could not determine script path automatically" -ForegroundColor Yellow
-            Write-Host "[INFO] Using the executing script itself as the source" -ForegroundColor Cyan
             Write-DebugLog "Could not determine script path automatically"
             $scriptPath = $null
         }
     }
-    
+
     return $scriptPath
 }
 
-$script:InstallDir    = Join-Path -Path $env:APPDATA -ChildPath "Transmission\AutoCleanup"
-$script:ScriptPath     = Join-Path -Path $InstallDir -ChildPath "TransmissionCleanup.ps1"
-$script:CredentialFile  = Join-Path -Path $InstallDir -ChildPath "TransmissionCredentials.xml"
-$script:ConfigFile      = Join-Path -Path $InstallDir -ChildPath "TransmissionConfig.xml"
-$script:HelpFile        = Join-Path -Path $InstallDir -ChildPath "TransmissionCleanupHelp.txt"
-# Start Menu configuration
-$startMenu = [Environment]::GetFolderPath("Programs")
-$shortcutFolder = Join-Path -Path $startMenu -ChildPath "Transmission Cleanup"
-# Default configuration
-$script:config = @{
-    RpcUrl           = "http://localhost:9091/transmission/rpc"
-    DownloadFolder    = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents"
-    AppsFolder        = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents\Apps"
-    MediaFolder       = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents\Media"
-    MusicFolder       = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents\Music"
-    ArchiveFolder     = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents\Archives"
-    OtherFolder       = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents\Other"
-    LogFile           = Join-Path -Path $InstallDir -ChildPath "TransmissionCleanup.log"
-    ScheduleTime      = "03:00"
-    ScheduleDays      = @()
-    ScheduleType      = "Daily"
-    AppExtensions     = @(".exe", ".msi", ".dmg", ".pkg", ".app", ".apk", ".iso")
-    MediaExtensions   = @(".mp4", ".mkv", ".avi", ".mov", ".jpg", ".png", ".gif", ".webp")
-    MusicExtensions   = @(".mp3", ".flac", ".wav", ".aac", ".ogg", ".m4a", ".wma")
-    ArchiveExtensions = @(".zip", ".rar", ".7z", ".tar", ".gz", ".bz2")
-    MaxRpcRetries     = 3
-    RpcRetryDelay     = 5
-    # Completion criteria - always use PercentDone
-    CompletionCriteria = "PercentDone"
-    # New setting to delete original folders after files are moved
-    DeleteOriginalFolders = $true
-}
-# Load configuration if it exists
-if (Test-Path $ConfigFile) {
-    try {
-        $script:config = Import-Clixml -Path $ConfigFile
-        # Ensure critical paths are set
-        if (-not $script:config.LogFile) { 
-            $script:config.LogFile = Join-Path -Path $InstallDir -ChildPath "TransmissionCleanup.log" 
-        }
-        if (-not $script:config.DownloadFolder) { 
-            $script:config.DownloadFolder = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents" 
-        }
-        # Update subfolder paths based on download folder
-        $baseFolder = $script:config.DownloadFolder
-        $script:config.AppsFolder     = Join-Path -Path $baseFolder -ChildPath "Apps"
-        $script:config.MediaFolder    = Join-Path -Path $baseFolder -ChildPath "Media"
-        $script:config.MusicFolder    = Join-Path -Path $baseFolder -ChildPath "Music"
-        $script:config.ArchiveFolder  = Join-Path -Path $baseFolder -ChildPath "Archives"
-        $script:config.OtherFolder    = Join-Path -Path $baseFolder -ChildPath "Other"
-        
-        # Force completion criteria to PercentDone
-        $script:config.CompletionCriteria = "PercentDone"
-        
-        # Ensure the DeleteOriginalFolders setting exists
-        if (-not [bool]::TryParse($script:config.DeleteOriginalFolders, [ref]$null)) {
-            $script:config.DeleteOriginalFolders = $true
-        }
-        
-        # Ensure RPC URL is set
-        if ([string]::IsNullOrEmpty($script:config.RpcUrl)) {
-            $script:config.RpcUrl = "http://localhost:9091/transmission/rpc"
-        }
-        
-        # Ensure Music folder and extensions exist (for backward compatibility)
-        if (-not $script:config.MusicFolder) {
-            $script:config.MusicFolder = Join-Path -Path $baseFolder -ChildPath "Music"
-        }
-        if (-not $script:config.MusicExtensions -or $script:config.MusicExtensions.Count -eq 0) {
-            $script:config.MusicExtensions = @(".mp3", ".flac", ".wav", ".aac", ".ogg", ".m4a", ".wma")
-            
-            # Remove music extensions from media extensions if they exist there
-            if ($script:config.MediaExtensions) {
-                $script:config.MediaExtensions = $script:config.MediaExtensions | Where-Object { 
-                    $ext = $_
-                    -not ($script:config.MusicExtensions -contains $ext)
-                }
-            }
-        }
-    }
-    catch {
-        Write-Host "Warning: Could not load config file. Using defaults." -ForegroundColor Yellow
-        Write-Log "Config load error: $($_.Exception.Message)" -Level WARN
-    }
-}
-#endregion
+function Normalize-TransmissionRpcUrl {
+    param(
+        [string]$Url,
+        [string]$DefaultUrl = "http://localhost:9091/transmission/rpc"
+    )
 
-#region HELPER FUNCTIONS
+    if ([string]::IsNullOrWhiteSpace($Url)) {
+        return (Normalize-TransmissionRpcUrl -Url $DefaultUrl)
+    }
 
-#-- Add basic log rotation: limit log file to 2MB --
+    $normalized = $Url.Trim()
+
+    if ($normalized -match '/transmission/web/?$') {
+        $normalized = $normalized -replace '/transmission/web/?$', '/transmission/rpc'
+    }
+    elseif ($normalized -match '/transmission/rpc/?$') {
+        $normalized = $normalized -replace '/+$', ''
+    }
+    elseif ($normalized -match '^https?://[^/]+/?$') {
+        $normalized = $normalized.TrimEnd('/') + '/transmission/rpc'
+    }
+    elseif ($normalized -match '^https?://.*/transmission/?$') {
+        $normalized = $normalized.TrimEnd('/') + '/rpc'
+    }
+
+    return $normalized
+}
+
+#-- Log rotation: rotate by size and keep several archives --
 function Rotate-Log {
     param(
         [Parameter(Mandatory=$true)]
-        [string]$LogFile
+        [string]$LogFile,
+        [long]$MaxSizeBytes = 2MB,
+        [int]$MaxArchives = 5
     )
-    
-    if (Test-Path $LogFile) {
-        $size = (Get-Item $LogFile).Length
-        if ($size -gt 2MB) {
-            Move-Item -Path $LogFile -Destination ("$LogFile.old") -Force
+
+    if ([string]::IsNullOrWhiteSpace($LogFile) -or -not (Test-Path -LiteralPath $LogFile)) {
+        return
+    }
+
+    $size = (Get-Item -LiteralPath $LogFile).Length
+    if ($size -lt $MaxSizeBytes) {
+        return
+    }
+
+    for ($i = $MaxArchives - 1; $i -ge 1; $i--) {
+        $source = "$LogFile.$i"
+        $dest = "$LogFile." + ($i + 1)
+        if (Test-Path -LiteralPath $source) {
+            Move-Item -LiteralPath $source -Destination $dest -Force
         }
     }
+
+    Move-Item -LiteralPath $LogFile -Destination "$LogFile.1" -Force
+}
+
+$script:InstallDir     = Join-Path -Path $env:APPDATA -ChildPath "Transmission\AutoCleanup"
+$script:LogsDir        = Join-Path -Path $script:InstallDir -ChildPath "Logs"
+$script:ScriptPath     = Join-Path -Path $script:InstallDir -ChildPath "TransmissionCleanup.ps1"
+$script:CredentialFile = Join-Path -Path $script:InstallDir -ChildPath "TransmissionCredentials.xml"
+$script:ConfigFile     = Join-Path -Path $script:InstallDir -ChildPath "TransmissionConfig.xml"
+$script:HelpFile       = Join-Path -Path $script:InstallDir -ChildPath "TransmissionCleanupHelp.txt"
+$startMenu             = [Environment]::GetFolderPath("Programs")
+$script:shortcutFolder = Join-Path -Path $startMenu -ChildPath "Transmission Cleanup"
+
+$script:config = @{
+    RpcUrl                = "http://localhost:9091/transmission/rpc"
+    DownloadFolder        = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents"
+    AppsFolder            = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents\Apps"
+    VideosFolder          = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents\Videos"
+    MusicFolder           = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents\Music"
+    ArchiveFolder         = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents\Archives"
+    OtherFolder           = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents\Other"
+    LogFile               = Join-Path -Path $script:LogsDir -ChildPath "TransmissionCleanup.log"
+    ScheduleTime          = "03:00"
+    ScheduleDays          = @()
+    ScheduleType          = "Daily"
+    AppExtensions         = @(".exe", ".msi", ".dmg", ".pkg", ".app", ".apk", ".iso", ".bat", ".cmd", ".reg", ".dll", ".bin", ".cue", ".mds", ".mdf", ".ccd", ".sub", ".img", ".nrg", ".isz", ".daa", ".dat", ".cab", ".xml", ".jpg", ".jpeg")
+    MediaExtensions       = @(".mp4", ".mkv", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".srt", ".sub", ".idx", ".ass", ".ssa", ".vtt", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".xml")
+    MusicExtensions       = @(".mp3", ".flac", ".wav", ".aac", ".ogg", ".m4a", ".wma")
+    ArchiveExtensions     = @(".zip", ".rar", ".7z", ".tar", ".gz", ".bz2")
+    MaxRpcRetries         = 3
+    RpcRetryDelay         = 5
+    CompletionCriteria    = "PercentDone"
+    DeleteOriginalFolders = $true
+    SceneReleaseMode      = $true
 }
 
 function Write-Log {
     param(
         [Parameter(Mandatory=$true)]
-        [string]$Message, 
+        [string]$Message,
         [ValidateSet("INFO", "WARN", "ERROR", "DEBUG")]
         [string]$Level = "INFO",
         [string]$LogFile = $null,
         [switch]$NoConsole
     )
     try {
-        # If no log file is specified, use the default from config
         if ([string]::IsNullOrEmpty($LogFile)) {
             $LogFile = $script:config.LogFile
-            
-            # During uninstallation, redirect logs to desktop
             if ($Uninstall) {
-                $desktopPath = [Environment]::GetFolderPath("Desktop")
-                $LogFile = Join-Path -Path $desktopPath -ChildPath "TransmissionCleanupUninstall.log"
+                $LogFile = Join-Path -Path $script:LogsDir -ChildPath "TransmissionCleanupUninstall.log"
             }
         }
-        
+
+        if ([string]::IsNullOrWhiteSpace($LogFile)) {
+            $LogFile = Join-Path -Path $script:LogsDir -ChildPath "TransmissionCleanup.log"
+        }
+
         $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         $logEntry = "[$timestamp][$Level] $Message"
-        
-        # Ensure log directory exists
-        $logDir = Split-Path $LogFile -Parent
-        if (-not (Test-Path $logDir)) { 
-            New-Item -ItemType Directory -Path $logDir -Force | Out-Null 
+
+        $logDir = Split-Path -Path $LogFile -Parent
+        if (-not [string]::IsNullOrWhiteSpace($logDir) -and -not (Test-Path $logDir)) {
+            New-Item -ItemType Directory -Path $logDir -Force | Out-Null
         }
-        
+
         Rotate-Log -LogFile $LogFile
         Add-Content -Path $LogFile -Value $logEntry -ErrorAction Stop
-        
-        # Only write to console if not DEBUG or if $Verbose is set, and NoConsole is not specified
+
         if ((-not $NoConsole) -and ($Verbose -or $Level -ne "DEBUG")) {
             switch ($Level) {
                 "ERROR" { Write-Host $logEntry -ForegroundColor Red }
@@ -303,6 +448,56 @@ function Write-Log {
     }
 }
 
+if (Test-Path $script:ConfigFile) {
+    try {
+        $script:config = Import-Clixml -Path $script:ConfigFile
+
+        if (-not $script:config.LogFile) {
+            $script:config.LogFile = Join-Path -Path $script:LogsDir -ChildPath "TransmissionCleanup.log"
+        }
+        if (-not $script:config.DownloadFolder) {
+            $script:config.DownloadFolder = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads\Torrents"
+        }
+
+        $baseFolder = $script:config.DownloadFolder
+        $script:config.AppsFolder    = Join-Path -Path $baseFolder -ChildPath "Apps"
+        $script:config.VideosFolder  = Join-Path -Path $baseFolder -ChildPath "Videos"
+        $script:config.MusicFolder   = Join-Path -Path $baseFolder -ChildPath "Music"
+        $script:config.ArchiveFolder = Join-Path -Path $baseFolder -ChildPath "Archives"
+        $script:config.OtherFolder   = Join-Path -Path $baseFolder -ChildPath "Other"
+
+        if ([string]::IsNullOrWhiteSpace($script:config.RpcUrl)) {
+            $script:config.RpcUrl = "http://localhost:9091/transmission/rpc"
+        }
+        $script:config.RpcUrl = Normalize-TransmissionRpcUrl -Url $script:config.RpcUrl
+
+        if (-not $script:config.AppExtensions -or $script:config.AppExtensions.Count -eq 0) {
+            $script:config.AppExtensions = @(".exe", ".msi", ".dmg", ".pkg", ".app", ".apk", ".iso", ".bat", ".cmd", ".reg", ".dll", ".bin", ".cue", ".mds", ".mdf", ".ccd", ".sub", ".img", ".nrg", ".isz", ".daa", ".dat", ".cab", ".xml", ".jpg", ".jpeg")
+        }
+        if (-not $script:config.MediaExtensions -or $script:config.MediaExtensions.Count -eq 0) {
+            $script:config.MediaExtensions = @(".mp4", ".mkv", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".srt", ".sub", ".idx", ".ass", ".ssa", ".vtt", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".xml")
+        }
+        if (-not $script:config.MusicExtensions -or $script:config.MusicExtensions.Count -eq 0) {
+            $script:config.MusicExtensions = @(".mp3", ".flac", ".wav", ".aac", ".ogg", ".m4a", ".wma")
+        }
+        if (-not $script:config.ArchiveExtensions -or $script:config.ArchiveExtensions.Count -eq 0) {
+            $script:config.ArchiveExtensions = @(".zip", ".rar", ".7z", ".tar", ".gz", ".bz2")
+        }
+        if ($null -eq $script:config.DeleteOriginalFolders) {
+            $script:config.DeleteOriginalFolders = $true
+        }
+        if ($null -eq $script:config.SceneReleaseMode) {
+            $script:config.SceneReleaseMode = $true
+        }
+    }
+    catch {
+        Write-Warning "Could not load config file. Using defaults."
+        Write-Log "Config load error: $($_.Exception.Message)" -Level WARN
+    }
+}
+#endregion
+
+#-- Add basic log rotation: limit log file to 2MB --
 function Test-Admin {
     try {
         $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -413,7 +608,8 @@ function Get-FolderSelection {
     param(
         [Parameter(Mandatory=$true)]
         [string]$Prompt, 
-        [string]$DefaultPath
+        [string]$DefaultPath,
+        [switch]$AllowCancel
     )
     try {
         Add-Type -AssemblyName System.Windows.Forms
@@ -421,15 +617,25 @@ function Get-FolderSelection {
         $dialog.Description = $Prompt
         $dialog.SelectedPath = if (Test-Path $DefaultPath) { $DefaultPath } else { [Environment]::GetFolderPath("MyDocuments") }
         $dialog.ShowNewFolderButton = $true
-        if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-            return $dialog.SelectedPath
+        
+        $result = $dialog.ShowDialog()
+        if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+            return @{ Path = $dialog.SelectedPath; Cancelled = $false }
         } else {
-            return $DefaultPath
+            if ($AllowCancel) {
+                return @{ Path = $null; Cancelled = $true }
+            } else {
+                return @{ Path = $DefaultPath; Cancelled = $false }
+            }
         }
     }
     catch {
         Write-Log "Folder selection failed: $($_.Exception.Message)" -Level WARN
-        return $DefaultPath
+        if ($AllowCancel) {
+            return @{ Path = $null; Cancelled = $true }
+        } else {
+            return @{ Path = $DefaultPath; Cancelled = $false }
+        }
     }
 }
 
@@ -455,37 +661,40 @@ function Get-RpcUrlInput {
     Write-Host "`nCurrent RPC URL: $DefaultUrl" -ForegroundColor Cyan
     
     $choices = @(
-        [System.Management.Automation.Host.ChoiceDescription]::new("&Change", "Change the RPC URL"),
-        [System.Management.Automation.Host.ChoiceDescription]::new("&Keep", "Keep the current RPC URL")
+        (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&Change', 'Change the RPC URL'),
+        (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&Keep', 'Keep the current RPC URL')
     )
     
     $result = $host.UI.PromptForChoice("Transmission RPC URL", "Would you like to change the Transmission RPC URL?", $choices, 1)
     
     if ($result -eq 0) {
         do {
-            $newUrl = Read-Host "Enter Transmission RPC URL (e.g., http://localhost:9091/transmission/rpc)"
+            $newUrl = Read-Host "Enter Transmission URL (web or rpc, e.g., http://localhost:9091/transmission/web/ or http://localhost:9091/transmission/rpc)"
             
             if ([string]::IsNullOrWhiteSpace($newUrl)) {
                 Write-Host "Using default URL: $DefaultUrl" -ForegroundColor Yellow
-                return $DefaultUrl
+                return (Normalize-TransmissionRpcUrl -Url $DefaultUrl)
             }
+            
+            $normalizedUrl = Normalize-TransmissionRpcUrl -Url $newUrl
             
             # Basic URL validation
-            if ($newUrl -match "^https?://.*?/.*$") {
-                return $newUrl
+            if ($normalizedUrl -match "^https?://.+/transmission/rpc/?$") {
+                Write-Host "Using normalized RPC URL: $normalizedUrl" -ForegroundColor Green
+                return $normalizedUrl
             }
             
-            Write-Host "Invalid URL format. Please enter a valid URL (e.g., http://localhost:9091/transmission/rpc)" -ForegroundColor Red
+            Write-Host "Invalid URL format. Please enter a valid Transmission web or RPC URL." -ForegroundColor Red
         } while ($true)
     }
     
-    return $DefaultUrl
+    return (Normalize-TransmissionRpcUrl -Url $DefaultUrl)
 }
 
 function Get-DeleteOriginalFolderPreference {
     $choices = @(
-        [System.Management.Automation.Host.ChoiceDescription]::new("&Yes", "Delete original folders after files are moved"),
-        [System.Management.Automation.Host.ChoiceDescription]::new("&No", "Keep original folders after files are moved")
+        (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&Yes', 'Delete original folders after files are moved'),
+        (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&No', 'Keep original folders after files are moved')
     )
     
     $result = $host.UI.PromptForChoice("Delete Original Folders", "Should the script delete original folders after files are moved?", $choices, 0)
@@ -497,8 +706,8 @@ function Get-DeleteOriginalFolderPreference {
 function Get-ScheduleType {
     # Try Out-GridView, else use text selection
     $choices = @(
-        [System.Management.Automation.Host.ChoiceDescription]::new("&Daily", "Run the task every day"),
-        [System.Management.Automation.Host.ChoiceDescription]::new("&Weekly", "Run the task on specific days each week")
+        (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&Daily', 'Run the task every day'),
+        (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&Weekly', 'Run the task on specific days each week')
     )
     $result = $host.UI.PromptForChoice("Schedule Type", "How often should the cleanup run?", $choices, 0)
     if ($result -eq 1) {
@@ -617,8 +826,75 @@ function Get-TransmissionCredential {
         Write-Log "Failed to save credentials: $($_.Exception.Message)" -Level ERROR
         Write-Host "Failed to save credentials: $($_.Exception.Message)" -ForegroundColor Red
     }
+
+    Prompt-TransmissionConnectionTest -Credential $cred -RpcUrl $script:config.RpcUrl | Out-Null
     
     return $cred
+}
+
+function Test-TransmissionConnection {
+    param(
+        [Parameter(Mandatory=$false)]
+        $Credential = $null,
+
+        [Parameter(Mandatory=$false)]
+        [string]$RpcUrl = $null
+    )
+
+    try {
+        if ([string]::IsNullOrWhiteSpace($RpcUrl)) {
+            $RpcUrl = $script:config.RpcUrl
+        }
+
+        $RpcUrl = Normalize-TransmissionRpcUrl -Url $RpcUrl
+        Write-Host "`nTesting Transmission connection..." -ForegroundColor Cyan
+        Write-Host "RPC URL: $RpcUrl" -ForegroundColor DarkCyan
+
+        if ($null -eq $Credential -and (Test-Path $CredentialFile)) {
+            try {
+                $Credential = Import-Clixml -Path $CredentialFile
+            }
+            catch {
+                Write-Log "Failed to load stored credentials for connection test: $($_.Exception.Message)" -Level WARN
+            }
+        }
+
+        $arguments = @{ fields = @('id') }
+        $null = Invoke-TransmissionRPC -Method "torrent-get" -Arguments $arguments -Credential $Credential -ErrorAction Stop
+
+        Write-Host "✓ Connection to Transmission succeeded." -ForegroundColor Green
+        Write-Log "Transmission connection test succeeded for URL: $RpcUrl" -Level INFO
+        return $true
+    }
+    catch {
+        $message = $_.Exception.Message
+        Write-Host "✗ Connection test failed: $message" -ForegroundColor Red
+        Write-Log "Transmission connection test failed: $message" -Level ERROR
+        return $false
+    }
+}
+
+function Prompt-TransmissionConnectionTest {
+    param(
+        [Parameter(Mandatory=$false)]
+        $Credential = $null,
+
+        [Parameter(Mandatory=$false)]
+        [string]$RpcUrl = $null
+    )
+
+    $choices = @(
+        (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&Test Now', 'Test the Transmission connection now'),
+        (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&Skip', 'Skip the connection test for now')
+    )
+
+    $result = $host.UI.PromptForChoice("Test Transmission Connection", "Would you like to test the Transmission connection now?", $choices, 0)
+
+    if ($result -eq 0) {
+        return (Test-TransmissionConnection -Credential $Credential -RpcUrl $RpcUrl)
+    }
+
+    return $false
 }
 
 function Reset-TransmissionCredential {
@@ -640,28 +916,28 @@ function Reset-TransmissionCredential {
     # Ask if user wants to change download folder
     Write-Host "`n=== DOWNLOAD FOLDER CONFIGURATION ===" -ForegroundColor Cyan
     $choices = @(
-        [System.Management.Automation.Host.ChoiceDescription]::new("&Yes", "Change the download folder location"),
-        [System.Management.Automation.Host.ChoiceDescription]::new("&No", "Keep the current download folder location")
+        (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&Yes', 'Change the download folder location'),
+        (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&No', 'Keep the current download folder location')
     )
     
     $result = $host.UI.PromptForChoice("Change Download Folder", "Would you like to change the download folder location?", $choices, 1)
     
     if ($result -eq 0) {
-        $newFolder = Get-FolderSelection -Prompt "Select Download Folder" -DefaultPath $script:config.DownloadFolder
-        if ($newFolder -ne $script:config.DownloadFolder) {
-            $script:config.DownloadFolder = $newFolder
+        $folderResult = Get-FolderSelection -Prompt "Select Download Folder" -DefaultPath $script:config.DownloadFolder
+        if ($folderResult.Path -and $folderResult.Path -ne $script:config.DownloadFolder) {
+            $script:config.DownloadFolder = $folderResult.Path
             
             # Update subfolder paths
-            $script:config.AppsFolder = Join-Path -Path $newFolder -ChildPath "Apps"
-            $script:config.MediaFolder = Join-Path -Path $newFolder -ChildPath "Media"
-            $script:config.MusicFolder = Join-Path -Path $newFolder -ChildPath "Music"
-            $script:config.ArchiveFolder = Join-Path -Path $newFolder -ChildPath "Archives"
-            $script:config.OtherFolder = Join-Path -Path $newFolder -ChildPath "Other"
+            $script:config.AppsFolder = Join-Path -Path $folderResult.Path -ChildPath "Apps"
+            $script:config.VideosFolder = Join-Path -Path $folderResult.Path -ChildPath "Videos"
+            $script:config.MusicFolder = Join-Path -Path $folderResult.Path -ChildPath "Music"
+            $script:config.ArchiveFolder = Join-Path -Path $folderResult.Path -ChildPath "Archives"
+            $script:config.OtherFolder = Join-Path -Path $folderResult.Path -ChildPath "Other"
             
             # Save updated config
             try {
                 $script:config | Export-Clixml -Path $ConfigFile
-                Write-Host "Configuration updated with new download folder: $newFolder" -ForegroundColor Green
+                Write-Host "Configuration updated with new download folder: $($folderResult.Path)" -ForegroundColor Green
             }
             catch {
                 Write-Log "Failed to save updated configuration: $($_.Exception.Message)" -Level ERROR
@@ -669,6 +945,8 @@ function Reset-TransmissionCredential {
             }
         }
     }
+
+    Prompt-TransmissionConnectionTest -Credential $cred -RpcUrl $script:config.RpcUrl | Out-Null
     
     # Wait for key press before exiting
     Wait-ForKeyPress
@@ -694,9 +972,12 @@ function Invoke-TransmissionRPC {
         $Credential = Get-TransmissionCredential
     }
     
-    $rpcUrl = $script:config.RpcUrl
+    $rpcUrl = Normalize-TransmissionRpcUrl -Url $script:config.RpcUrl
+    $script:config.RpcUrl = $rpcUrl
     Write-Log "RPC URL: $rpcUrl" -Level DEBUG
     
+    $rpcCandidates = @($rpcUrl) | Select-Object -Unique
+
     $headers = @{
         "X-Transmission-Session-Id" = $SessionId
     }
@@ -727,8 +1008,30 @@ function Invoke-TransmissionRPC {
                 $webClient.Headers.Add($key, $headers[$key])
             }
             
-            # Make the request
-            $response = $webClient.UploadString($rpcUrl, $body)
+            $response = $null
+            $lastRpcError = $null
+            foreach ($candidateUrl in $rpcCandidates) {
+                try {
+                    Write-Log "Trying RPC endpoint: $candidateUrl" -Level DEBUG
+                    $response = $webClient.UploadString($candidateUrl, $body)
+                    if ($candidateUrl -ne $rpcUrl -and $candidateUrl -match '/transmission/rpc/?$') {
+                        $script:config.RpcUrl = $candidateUrl
+                    }
+                    break
+                }
+                catch {
+                    $lastRpcError = $_.Exception
+                    if ($candidateUrl -match '/transmission/web/?$') {
+                        $normalizedCandidate = $candidateUrl -replace '/transmission/web/?$', '/transmission/rpc'
+                        Write-Log "Web UI URL encountered during RPC call; normalized to: $normalizedCandidate" -Level WARN
+                    }
+                    Write-Log "RPC endpoint failed: $candidateUrl - $($lastRpcError.Message)" -Level DEBUG
+                }
+            }
+            if ($null -eq $response) {
+                if ($null -ne $lastRpcError) { throw $lastRpcError }
+                throw "No Transmission RPC endpoint could be reached."
+            }
             Write-Log "RPC response received successfully" -Level DEBUG
             
             # Parse and return the response
@@ -805,10 +1108,12 @@ function Get-TorrentList {
             return $null
         }
         
-        $torrents = $result.arguments.torrents
+        $torrents = @($result.arguments.torrents)
         Write-Log "Total torrents: $($torrents.Count)" -Level INFO
         
-        return $torrents
+        # Important: force an array return so 0 torrents is treated as a valid empty result,
+        # not as $null / failure by the caller.
+        return ,$torrents
     }
     catch {
         Write-Log "Error getting torrent list: $($_.Exception.Message)" -Level ERROR
@@ -903,21 +1208,30 @@ function Get-FileCategory {
     )
     
     $extension = [System.IO.Path]::GetExtension($FilePath).ToLower()
+    $videoExtensions = @('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg', '.3gp', '.ts', '.m2ts')
+    $releaseSupportExtensions = @('.nfo', '.sfv', '.md5', '.sha1', '.sha256', '.diz', '.txt', '.pdf', '.doc', '.docx', '.rtf', '.ini', '.cfg', '.conf', '.bat', '.cmd', '.reg', '.dll')
+    $appSidecarExtensions = @('.dat', '.cab', '.xml', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.ico', '.manifest', '.cat', '.json', '.yaml', '.yml', '.msu', '.msp', '.chm', '.hlp', '.inf', '.drv', '.ocx', '.sys', '.bak', '.log', '.lst', '.sig', '.meta')
+    $videoSidecarExtensions = @('.srt', '.sub', '.idx', '.ass', '.ssa', '.vtt', '.nfo', '.txt', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.xml', '.bak', '.log', '.meta')
+    $discImageExtensions = @('.iso', '.bin', '.cue', '.mds', '.mdf', '.ccd', '.sub', '.img', '.nrg', '.isz', '.daa')
+    $archiveExtensions = @('.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.001', '.002', '.003', '.004', '.005')
     
-    if ($script:config.AppExtensions -contains $extension) {
-        return "App"
+    if (($script:config.AppExtensions -contains $extension) -or ($discImageExtensions -contains $extension)) {
+        return 'App'
     }
     elseif ($script:config.MusicExtensions -contains $extension) {
-        return "Music"
+        return 'Music'
     }
-    elseif ($script:config.MediaExtensions -contains $extension) {
-        return "Media"
+    elseif ($videoExtensions -contains $extension) {
+        return 'Video'
     }
-    elseif ($script:config.ArchiveExtensions -contains $extension) {
-        return "Archive"
+    elseif (($script:config.ArchiveExtensions -contains $extension) -or ($archiveExtensions -contains $extension)) {
+        return 'Archive'
+    }
+    elseif ($releaseSupportExtensions -contains $extension) {
+        return 'Other'
     }
     else {
-        return "Other"
+        return 'Other'
     }
 }
 
@@ -929,11 +1243,154 @@ function Get-DestinationFolder {
     
     switch ($Category) {
         "App" { return $script:config.AppsFolder }
-        "Media" { return $script:config.MediaFolder }
+        "Video" { return $script:config.VideosFolder }
         "Music" { return $script:config.MusicFolder }
         "Archive" { return $script:config.ArchiveFolder }
         default { return $script:config.OtherFolder }
     }
+}
+
+function Test-ShouldKeepFile {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$FilePath,
+        [Parameter(Mandatory=$true)]
+        [string]$Category
+    )
+    
+    $fileName = [System.IO.Path]::GetFileName($FilePath).ToLower()
+    $extension = [System.IO.Path]::GetExtension($FilePath).ToLower()
+    $videoExtensions = @('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg', '.3gp', '.ts', '.m2ts')
+    $appSupportingExtensions = @('.txt', '.nfo', '.pdf', '.doc', '.docx', '.rtf', '.ini', '.cfg', '.conf', '.sfv', '.md5', '.sha1', '.sha256', '.diz', '.bat', '.cmd', '.reg', '.dll', '.dat', '.cab', '.xml', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.ico', '.manifest', '.cat', '.json', '.yaml', '.yml', '.msu', '.msp', '.chm', '.hlp', '.inf', '.drv', '.ocx', '.sys', '.bak', '.log', '.lst', '.sig', '.meta')
+    $archiveExtensions = @('.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.001', '.002', '.003', '.004', '.005')
+    $discImageExtensions = @('.iso', '.bin', '.cue', '.mds', '.mdf', '.ccd', '.sub', '.img', '.nrg', '.isz', '.daa')
+    
+    if (Test-IsDefinitelyUnwantedFile -FilePath $FilePath) {
+        return $false
+    }
+    
+    switch ($Category) {
+        'Video' {
+            $videoSupportingExtensions = @('.srt', '.sub', '.idx', '.ass', '.ssa', '.vtt', '.nfo', '.txt', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.xml', '.dat', '.mka', '.cue', '.bak', '.log', '.meta')
+            if (Test-IsDefinitelyUnwantedFile -FilePath $FilePath) { return $false }
+            if (($script:config.AppExtensions -contains $extension) -or ($discImageExtensions -contains $extension) -or ($script:config.MusicExtensions -contains $extension)) { return ($videoExtensions -contains $extension) }
+            return ($videoExtensions -contains $extension) -or ($videoSupportingExtensions -contains $extension) -or ($extension -eq '')
+        }
+        'Music' {
+            $unwantedForMusic = @('.srt', '.sub', '.idx', '.nfo', '.url', '.torrent', '.db')
+            if ($unwantedForMusic -contains $extension) { return $false }
+            return ($script:config.MusicExtensions -contains $extension) -or $extension -eq '.txt' -or $extension -eq '.pdf'
+        }
+        'App' {
+            $unwantedForApps = @('.torrent', '.db', '.url')
+            if ($unwantedForApps -contains $extension) { return $false }
+            return ($script:config.AppExtensions -contains $extension) -or ($appSupportingExtensions -contains $extension) -or ($archiveExtensions -contains $extension) -or ($discImageExtensions -contains $extension)
+        }
+        'Archive' {
+            return ($script:config.ArchiveExtensions -contains $extension) -or ($archiveExtensions -contains $extension)
+        }
+        default {
+            $unwantedGeneral = @('.url', '.torrent', '.db')
+            if ($unwantedGeneral -contains $extension) { return $false }
+            return $true
+        }
+    }
+}
+
+function Get-CleanFolderName {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$TorrentName
+    )
+    
+    # Remove common torrent naming patterns
+    $cleanName = $TorrentName
+    
+    # Remove resolution patterns (1080p, 720p, etc.)
+    $cleanName = $cleanName -replace "\b\d{3,4}p\b", ""
+    
+    # Remove codec patterns (x264, x265, H264, etc.)
+    $cleanName = $cleanName -replace "\b[xhH]\d{3}\b", ""
+    $cleanName = $cleanName -replace "\bHEVC\b", ""
+    
+    # Remove release group patterns (usually in brackets or after dash)
+    $cleanName = $cleanName -replace "\[.*?\]", ""
+    $cleanName = $cleanName -replace "-\w+$", ""
+    
+    # Remove year from the end if it's making the name too long
+    # But keep it if it's part of the actual title
+    
+    # Remove extra spaces and clean up
+    $cleanName = $cleanName -replace "\s+", " "
+    $cleanName = $cleanName.Trim()
+    
+    # Convert to safe path name
+    return ConvertTo-SafePath -Name $cleanName
+}
+
+function Remove-FolderForce {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path
+    )
+    
+    try {
+        if (Test-Path -LiteralPath $Path -PathType Container) {
+            # Clear read-only attributes recursively to avoid access denied
+            Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+                try { $_.Attributes = 'Normal' } catch {}
+            }
+            try { (Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue).Attributes = 'Normal' } catch {}
+            
+            # Try normal deletion first
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            if (-not (Test-Path -LiteralPath $Path)) {
+                Write-Log "Successfully deleted folder using standard method: $Path" -Level INFO
+                return $true
+            }
+        }
+    }
+    catch {
+        Write-Log "Standard deletion failed, trying alternative methods: $($_.Exception.Message)" -Level WARN
+    }
+    
+    # Try using robocopy to delete (Windows method)
+    try {
+        if (Test-Path -LiteralPath $Path -PathType Container) {
+            $tempEmptyDir = Join-Path -Path $env:TEMP -ChildPath "EmptyForRobocopy_$(Get-Random)"
+            New-Item -ItemType Directory -Path $tempEmptyDir -Force | Out-Null
+            
+            # Use robocopy to mirror empty folder over the target (effectively wiping it)
+            $null = robocopy "$tempEmptyDir" "$Path" /MIR /R:1 /W:1 2>$null
+            Remove-Item -LiteralPath $tempEmptyDir -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $Path -Force -Recurse -ErrorAction SilentlyContinue
+            
+            if (-not (Test-Path -LiteralPath $Path)) {
+                Write-Log "Successfully deleted folder using robocopy method: $Path" -Level INFO
+                return $true
+            }
+        }
+    }
+    catch {
+        Write-Log "Robocopy deletion failed: $($_.Exception.Message)" -Level WARN
+    }
+    
+    # Try using cmd rmdir
+    try {
+        if (Test-Path -LiteralPath $Path -PathType Container) {
+            $null = cmd /c rmdir /s /q "${Path}" 2>$null
+            if (-not (Test-Path -LiteralPath $Path)) {
+                Write-Log "Successfully deleted folder using cmd rmdir: $Path" -Level INFO
+                return $true
+            }
+        }
+    }
+    catch {
+        Write-Log "CMD rmdir deletion failed: $($_.Exception.Message)" -Level WARN
+    }
+    
+    Write-Log "All deletion methods failed for folder: $Path" -Level ERROR
+    return $false
 }
 
 function Cut-FileWithRetry {
@@ -1002,6 +1459,136 @@ function Cut-FileWithRetry {
     return $success
 }
 
+function Get-ReleaseBundleStem {
+    param([Parameter(Mandatory=$true)][string]$RelativePath)
+    $name = [System.IO.Path]::GetFileName($RelativePath).ToLower()
+    $name = $name -replace '\.(zip|7z|rar)\.\d{3}$', ''
+    $name = $name -replace '\.part\d+$', ''
+    $name = $name -replace '\.(r|z)\d{2,3}$', ''
+    $name = $name -replace '\.\d{3}$', ''
+    return [System.IO.Path]::GetFileNameWithoutExtension($name)
+}
+
+function Test-IsMultipartArchiveFile {
+    param([Parameter(Mandatory=$true)][string]$RelativePath)
+    $name = [System.IO.Path]::GetFileName($RelativePath).ToLower()
+    return ($name -match '\.part\d+$' -or $name -match '\.(r|z)\d{2,3}$' -or $name -match '\.(zip|7z)\.\d{3}$' -or $name -match '\.\d{3}$')
+}
+
+
+function Test-IsDefinitelyUnwantedFile {
+    param([Parameter(Mandatory=$true)][string]$FilePath)
+    $fileName = [System.IO.Path]::GetFileName($FilePath).ToLower()
+    $extension = [System.IO.Path]::GetExtension($FilePath).ToLower()
+
+    $junkNames = @('thumbs.db', 'desktop.ini')
+    $junkExtensions = @('.url', '.torrent', '.db', '.tmp', '.part', '.crdownload')
+
+    if ($junkNames -contains $fileName) { return $true }
+    if ($fileName -match 'sample') { return $true }
+    if ($fileName -match 'rarbg') { return $true }
+    if ($junkExtensions -contains $extension) { return $true }
+    return $false
+}
+
+
+function Test-PathIsUnderAnyAnchor {
+    param(
+        [Parameter(Mandatory=$true)][string]$RelativeDirectory,
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [System.Collections.Generic.HashSet[string]]$AnchorDirectories = $null
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RelativeDirectory)) { $RelativeDirectory = '.' }
+
+    if ($null -eq $AnchorDirectories -or $AnchorDirectories.Count -eq 0) {
+        return $false
+    }
+
+    $currentDir = $RelativeDirectory
+
+    while ($true) {
+        if ($AnchorDirectories.Contains($currentDir)) { return $true }
+        if ($currentDir -eq '.' -or $currentDir -eq '\' -or $currentDir -eq '') { break }
+
+        $parentDir = Split-Path -Path $currentDir -Parent
+        if ([string]::IsNullOrWhiteSpace($parentDir) -or $parentDir -eq $currentDir) {
+            $currentDir = '.'
+        }
+        else {
+            $currentDir = $parentDir
+        }
+    }
+
+    return $false
+}
+
+function Get-TopLevelRelativeFolder {
+    param([Parameter(Mandatory=$true)][string]$RelativePath)
+
+    $normalized = ($RelativePath -replace '/', '\').Trim('\')
+    if ([string]::IsNullOrWhiteSpace($normalized)) { return '.' }
+
+    $parts = $normalized.Split('\')
+    if ($parts.Length -le 1) { return '.' }
+    return $parts[0]
+}
+
+function Get-RelativeDestinationPath {
+    param(
+        [Parameter(Mandatory=$true)][string]$TorrentRelativePath,
+        [Parameter(Mandatory=$true)][bool]$PreserveNestedStructure,
+        [Parameter(Mandatory=$true)][string]$FallbackLeafName
+    )
+
+    if ($PreserveNestedStructure) {
+        $normalized = ($TorrentRelativePath -replace '/', '\').Trim('\')
+        if ([string]::IsNullOrWhiteSpace($normalized)) { return $FallbackLeafName }
+
+        # Transmission often reports files as "Release Folder\file.ext" while this script
+        # already creates a cleaned destination folder such as "Videos\Movie Name".
+        # Strip the torrent/release root folder from preserved paths so we do not create:
+        #   Videos\Movie Name\Movie Name [Release Tags]\file.ext
+        $parts = @($normalized -split '\\' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($parts.Count -gt 1) {
+            return ($parts[1..($parts.Count - 1)] -join '\')
+        }
+
+        return $normalized
+    }
+    return $FallbackLeafName
+}
+
+function Test-FolderHasKeepableContent {
+    param(
+        [Parameter(Mandatory=$true)][string]$FolderPath
+    )
+
+    try {
+        if (-not (Test-Path -LiteralPath $FolderPath -PathType Container)) { return $false }
+
+        $remainingFiles = @(Get-ChildItem -LiteralPath $FolderPath -Force -Recurse -File -ErrorAction SilentlyContinue)
+        foreach ($remainingFile in $remainingFiles) {
+            # Only obvious junk can be auto-discarded. Any non-junk leftover keeps the folder.
+            if (-not (Test-IsDefinitelyUnwantedFile -FilePath $remainingFile.FullName)) {
+                return $true
+            }
+        }
+
+        return $false
+    }
+    catch {
+        Write-Log "Could not inspect original folder '$FolderPath' for cleanup: $($_.Exception.Message)" -Level WARN
+        return $true
+    }
+}
+
+function Test-TorrentNameSuggestsAppRelease {
+    param([Parameter(Mandatory=$true)][string]$TorrentName)
+    return $TorrentName -match '(?i)(setup|install|installer|crack|keygen|patch|portable|x64|x86|exe|msi|app|software|program|tool|office|suite|build|activator|game|repack)'
+}
+
 function Organize-Files {
     param(
         [Parameter(Mandatory=$true)]
@@ -1016,66 +1603,318 @@ function Organize-Files {
     Write-Log "Organizing files for torrent: $torrentName" -Level INFO
     Write-Log "Download directory: $downloadDir" -Level DEBUG
     
-    # Process each file in the torrent
+    $cleanTorrentName = Get-CleanFolderName -TorrentName $torrentName
+    Write-Log "Clean torrent name: $cleanTorrentName" -Level DEBUG
+    
     $organizedFiles = @()
     $failedFiles = @()
+    $deletedFiles = @()
+    $keptFiles = @()
+
+    $videoExtensions = @('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg', '.3gp', '.ts', '.m2ts')
+    $archiveExtensions = @('.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.001', '.002', '.003', '.004', '.005')
+    $releaseSupportExtensions = @('.nfo', '.sfv', '.md5', '.sha1', '.sha256', '.diz', '.txt', '.pdf', '.doc', '.docx', '.rtf', '.ini', '.cfg', '.conf', '.bat', '.cmd', '.reg', '.dll')
+    $appSidecarExtensions = @('.dat', '.cab', '.xml', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.ico', '.manifest', '.cat', '.json', '.yaml', '.yml', '.msu', '.msp', '.chm', '.hlp', '.inf', '.drv', '.ocx', '.sys', '.bak', '.log', '.lst', '.sig', '.meta')
+    $videoSidecarExtensions = @('.srt', '.sub', '.idx', '.ass', '.ssa', '.vtt', '.nfo', '.txt', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.xml', '.bak', '.log', '.meta')
+    $discImageExtensions = @('.iso', '.bin', '.cue', '.mds', '.mdf', '.ccd', '.sub', '.img', '.nrg', '.isz', '.daa')
+
+    $appFiles = @()
+    $videoFiles = @()
+    $allFileList = @()
+    $discBundleStems = New-Object System.Collections.Generic.HashSet[string]
+    $appAnchorDirectories = New-Object System.Collections.Generic.HashSet[string]
+    $videoAnchorDirectories = New-Object System.Collections.Generic.HashSet[string]
+    $appTopLevelFolders = New-Object System.Collections.Generic.HashSet[string]
+    $videoTopLevelFolders = New-Object System.Collections.Generic.HashSet[string]
     
     foreach ($file in $Torrent.files) {
-        $filePath = Join-Path -Path $downloadDir -ChildPath $file.name
-        $fileName = Split-Path -Path $file.name -Leaf
-        
-        Write-Log "Processing file: $fileName" -Level DEBUG
-        
-        # Determine file category and destination
-        $category = Get-FileCategory -FilePath $filePath
-        $destFolder = Get-DestinationFolder -Category $category
-        $destPath = Join-Path -Path $destFolder -ChildPath $fileName
-        
-        Write-Log "File category: $category, Destination: $destPath" -Level DEBUG
-        
-        # Move the file
-        if ($WhatIf) {
-            Write-Log "WhatIf: Would move $filePath to $destPath" -Level INFO
-            $organizedFiles += $file.name
+        $relativePath = ($file.name -replace '/', '\')
+        $filePath = Join-Path -Path $downloadDir -ChildPath $relativePath
+        $extension = [System.IO.Path]::GetExtension($filePath).ToLower()
+        $leafName = Split-Path -Path $relativePath -Leaf
+        $bundleStem = Get-ReleaseBundleStem -RelativePath $relativePath
+
+        $fileInfo = @{
+            File = $file
+            RelativePath = $relativePath
+            FilePath = $filePath
+            FileName = $leafName
+            Extension = $extension
+            BundleStem = $bundleStem
         }
-        else {
-            $success = Cut-FileWithRetry -Source $filePath -Destination $destPath -MaxRetries $MaxRetries -RetryDelay $RetryDelay
-            
-            if ($success) {
-                $organizedFiles += $file.name
-            }
-            else {
-                $failedFiles += $file.name
-            }
+        $allFileList += $fileInfo
+        
+        $relativeDir = Split-Path -Path $relativePath -Parent
+        if ([string]::IsNullOrEmpty($relativeDir)) { $relativeDir = '.' }
+
+        $topLevelFolder = Get-TopLevelRelativeFolder -RelativePath $relativePath
+
+        if (($script:config.AppExtensions -contains $extension) -or ($discImageExtensions -contains $extension) -or ($archiveExtensions -contains $extension)) {
+            $appFiles += $filePath
+            $discBundleStems.Add($bundleStem) | Out-Null
+            $appAnchorDirectories.Add($relativeDir) | Out-Null
+            $appTopLevelFolders.Add($topLevelFolder) | Out-Null
+        }
+        if ($videoExtensions -contains $extension) {
+            $videoFiles += $filePath
+            $videoAnchorDirectories.Add($relativeDir) | Out-Null
+            $videoTopLevelFolders.Add($topLevelFolder) | Out-Null
         }
     }
     
-    # Delete original folder if empty and configured to do so
-    if ($script:config.DeleteOriginalFolders -and -not $WhatIf) {
-        try {
-            # Check if the folder is empty
-            $folderPath = Join-Path -Path $downloadDir -ChildPath $torrentName
-            if (Test-Path $folderPath) {
-                $items = Get-ChildItem -Path $folderPath -Force -ErrorAction SilentlyContinue
-                
-                if ($null -eq $items -or $items.Count -eq 0) {
-                    Write-Log "Deleting empty folder: $folderPath" -Level INFO
-                    Remove-Item -Path $folderPath -Force -Recurse -ErrorAction SilentlyContinue
+    $totalFiles = [Math]::Max($allFileList.Count,1)
+    $torrentNameSuggestsApp = Test-TorrentNameSuggestsAppRelease -TorrentName $torrentName
+    $isVideoTorrent = ($videoFiles.Count -gt 0) -and ($videoFiles.Count -ge ($totalFiles * 0.3))
+    $isAppTorrent = ($appFiles.Count -gt 0) -and (($appFiles.Count -ge ($totalFiles * 0.1)) -or $torrentNameSuggestsApp)
+
+    if (-not $isAppTorrent) {
+        $releaseSupportCount = @($allFileList | Where-Object { ($releaseSupportExtensions -contains $_.Extension) -or ($archiveExtensions -contains $_.Extension) -or (Test-IsMultipartArchiveFile -RelativePath $_.RelativePath) }).Count
+        if ($torrentNameSuggestsApp -and $releaseSupportCount -gt 0) {
+            $isAppTorrent = $true
+        }
+    }
+    
+    Write-Log "Torrent analysis: $($videoFiles.Count) video files, $($appFiles.Count) app/disc files out of $totalFiles total. IsVideoTorrent: $isVideoTorrent, IsAppTorrent: $isAppTorrent" -Level INFO
+    
+    $filesByCategory = @{}
+    
+    foreach ($fileInfo in $allFileList) {
+        $filePath = $fileInfo.FilePath
+        $extension = $fileInfo.Extension
+        $category = Get-FileCategory -FilePath $filePath
+
+        $relativeDir = Split-Path -Path $fileInfo.RelativePath -Parent
+        if ([string]::IsNullOrEmpty($relativeDir)) { $relativeDir = '.' }
+        $topLevelFolder = Get-TopLevelRelativeFolder -RelativePath $fileInfo.RelativePath
+        $underAppAnchor = (Test-PathIsUnderAnyAnchor -RelativeDirectory $relativeDir -AnchorDirectories $appAnchorDirectories) -or $appTopLevelFolders.Contains($topLevelFolder)
+        $underVideoAnchor = (Test-PathIsUnderAnyAnchor -RelativeDirectory $relativeDir -AnchorDirectories $videoAnchorDirectories) -or $videoTopLevelFolders.Contains($topLevelFolder)
+        $hasNoExtension = [string]::IsNullOrEmpty($extension)
+
+        if ($isAppTorrent) {
+            $isKnownNonApp = (($videoExtensions -contains $extension) -or ($script:config.MusicExtensions -contains $extension))
+            if (-not (Test-IsDefinitelyUnwantedFile -FilePath $filePath)) {
+                if (($category -eq 'Archive') -or ($releaseSupportExtensions -contains $extension) -or ($appSidecarExtensions -contains $extension) -or ($discImageExtensions -contains $extension) -or (Test-IsMultipartArchiveFile -RelativePath $fileInfo.RelativePath) -or ($discBundleStems.Contains($fileInfo.BundleStem)) -or $underAppAnchor -or ($hasNoExtension -and -not $isKnownNonApp) -or (($category -eq 'Other') -and -not $isKnownNonApp)) {
+                    $category = 'App'
+                }
+            }
+        }
+
+        if ($isVideoTorrent) {
+            $isKnownNonVideo = (($script:config.MusicExtensions -contains $extension) -or ($script:config.AppExtensions -contains $extension) -or ($discImageExtensions -contains $extension))
+            if (-not (Test-IsDefinitelyUnwantedFile -FilePath $filePath)) {
+                if (($category -eq 'Video') -or ($videoSidecarExtensions -contains $extension) -or $underVideoAnchor -or ($hasNoExtension -and -not $isKnownNonVideo -and -not $isAppTorrent) -or (($category -eq 'Other') -and -not $isKnownNonVideo -and -not $isAppTorrent)) {
+                    $category = 'Video'
+                }
+            }
+        }
+        
+        if (-not $filesByCategory.ContainsKey($category)) {
+            $filesByCategory[$category] = @()
+        }
+        $filesByCategory[$category] += $fileInfo
+    }
+    
+    foreach ($category in $filesByCategory.Keys) {
+        $filesInCategory = $filesByCategory[$category]
+        Write-Log "Processing $($filesInCategory.Count) files in category: $category" -Level INFO
+        
+        if ($isVideoTorrent -and $category -ne 'Video' -and -not $isAppTorrent) {
+            foreach ($fileInfo in $filesInCategory) {
+                $filePath = $fileInfo.FilePath
+                $fileName = $fileInfo.FileName
+                if ($WhatIf) {
+                    Write-Log "WhatIf: Would delete $filePath" -Level INFO
+                    $deletedFiles += $fileName
                 }
                 else {
-                    Write-Log "Folder not empty, skipping deletion: $folderPath" -Level INFO
+                    try {
+                        if (Test-FilePath $filePath) {
+                            Remove-Item -LiteralPath $filePath -Force -ErrorAction Stop
+                            Write-Log "Successfully deleted: $fileName" -Level INFO
+                            $deletedFiles += $fileName
+                        }
+                    }
+                    catch {
+                        Write-Log "Failed to delete file $fileName : $($_.Exception.Message)" -Level WARN
+                    }
+                }
+            }
+            continue
+        }
+        
+        $baseCategoryFolder = Get-DestinationFolder -Category $category
+        $torrentSpecificFolder = Join-Path -Path $baseCategoryFolder -ChildPath $cleanTorrentName
+        
+        foreach ($fileInfo in $filesInCategory) {
+            $filePath = $fileInfo.FilePath
+            $fileName = $fileInfo.FileName
+            $shouldKeep = Test-ShouldKeepFile -FilePath $filePath -Category $category
+            
+            if ($shouldKeep) {
+                $preserveNested = (($isAppTorrent -and $category -eq 'App') -or ($isVideoTorrent -and $category -eq 'Video'))
+                $relativeDest = Get-RelativeDestinationPath -TorrentRelativePath $fileInfo.RelativePath -PreserveNestedStructure $preserveNested -FallbackLeafName $fileName
+                $destPath = Join-Path -Path $torrentSpecificFolder -ChildPath $relativeDest
+                
+                if ($WhatIf) {
+                    Write-Log "WhatIf: Would move $filePath to $destPath" -Level INFO
+                    $organizedFiles += $fileName
+                }
+                else {
+                    $success = Cut-FileWithRetry -Source $filePath -Destination $destPath -MaxRetries $MaxRetries -RetryDelay $RetryDelay
+                    if ($success) {
+                        $organizedFiles += $fileName
+                        $keptFiles += $fileName
+                    }
+                    else {
+                        $failedFiles += $fileName
+                    }
+                }
+            }
+            else {
+                if ($WhatIf) {
+                    Write-Log "WhatIf: Would delete $filePath" -Level INFO
+                    $deletedFiles += $fileName
+                }
+                else {
+                    try {
+                        if (Test-FilePath $filePath) {
+                            Remove-Item -LiteralPath $filePath -Force -ErrorAction Stop
+                            Write-Log "Successfully deleted: $fileName" -Level INFO
+                            $deletedFiles += $fileName
+                        }
+                    }
+                    catch {
+                        Write-Log "Failed to delete file $fileName : $($_.Exception.Message)" -Level WARN
+                    }
                 }
             }
         }
-        catch {
-            Write-Log "Error checking/deleting folder: $($_.Exception.Message)" -Level WARN
+    }
+    
+    if ($script:config.DeleteOriginalFolders -and -not $WhatIf) {
+        Write-Log 'Starting folder cleanup - DeleteOriginalFolders is enabled' -Level INFO
+        $possiblePaths = @()
+        $directPath = Join-Path -Path $downloadDir -ChildPath $torrentName
+        $possiblePaths += $directPath
+        foreach ($file in $Torrent.files) {
+            $fileDir = Split-Path -Path ($file.name -replace '/', '\') -Parent
+            if (-not [string]::IsNullOrEmpty($fileDir)) {
+                $pathParts = $fileDir.Split([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+                $rootFolderName = $pathParts[0]
+                if (-not [string]::IsNullOrEmpty($rootFolderName)) {
+                    $rootFolderPath = Join-Path -Path $downloadDir -ChildPath $rootFolderName
+                    if ($possiblePaths -notcontains $rootFolderPath) { $possiblePaths += $rootFolderPath }
+                }
+            }
+        }
+        foreach ($folderPath in ($possiblePaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+            if (Test-Path -LiteralPath $folderPath -PathType Container) {
+                try {
+                    if (-not (Test-FolderHasKeepableContent -FolderPath $folderPath)) {
+                        Write-Log "Original folder has no keepable content remaining; deleting: $folderPath" -Level INFO
+                        Remove-Item -LiteralPath $folderPath -Recurse -Force -ErrorAction Stop
+                        Write-Log "Successfully deleted original folder: $folderPath" -Level INFO
+                    }
+                    else {
+                        # Remove any empty child folders, but keep the original folder because it still contains non-junk leftovers.
+                        $remainingFolders = @(Get-ChildItem -LiteralPath $folderPath -Force -Recurse -Directory -ErrorAction SilentlyContinue)
+                        $remainingFolders | Sort-Object FullName -Descending | ForEach-Object {
+                            try {
+                                $subItems = @(Get-ChildItem -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue)
+                                if ($subItems.Count -eq 0) {
+                                    Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop
+                                }
+                            }
+                            catch {}
+                        }
+                        Write-Log "Folder still contains non-junk leftovers, keeping original folder: $folderPath" -Level INFO
+                    }
+                }
+                catch {
+                    Write-Log "Error during cleanup of folder $folderPath : $($_.Exception.Message)" -Level WARN
+                }
+            }
+        }
+        Write-Log 'Folder cleanup completed' -Level INFO
+    }
+    else {
+        if ($WhatIf) {
+            Write-Log 'WhatIf: Would attempt to delete original folders if DeleteOriginalFolders is enabled' -Level INFO
+        }
+        elseif (-not $script:config.DeleteOriginalFolders) {
+            Write-Log 'Folder deletion disabled (DeleteOriginalFolders = false)' -Level INFO
         }
     }
     
-    # Return results
-    return @{
-        Organized = $organizedFiles
-        Failed = $failedFiles
+    Write-Log "Organization complete. Kept: $($keptFiles.Count), Deleted: $($deletedFiles.Count), Failed: $($failedFiles.Count)" -Level INFO
+    return @{ Organized = $organizedFiles; Failed = $failedFiles; Deleted = $deletedFiles; Kept = $keptFiles }
+}
+
+
+function Test-TorrentDataAbsentOrEmpty {
+    param(
+        [Parameter(Mandatory=$true)]
+        [PSObject]$Torrent
+    )
+
+    try {
+        $downloadDir = $Torrent.downloadDir
+        $torrentName = $Torrent.name
+        $possiblePaths = New-Object System.Collections.Generic.List[string]
+
+        if (-not [string]::IsNullOrWhiteSpace($downloadDir) -and -not [string]::IsNullOrWhiteSpace($torrentName)) {
+            $possiblePaths.Add((Join-Path -Path $downloadDir -ChildPath $torrentName))
+        }
+
+        foreach ($file in @($Torrent.files)) {
+            $relativePath = ($file.name -replace '/', '\').Trim('\')
+            if ([string]::IsNullOrWhiteSpace($relativePath)) { continue }
+
+            if (-not [string]::IsNullOrWhiteSpace($downloadDir)) {
+                $possiblePaths.Add((Join-Path -Path $downloadDir -ChildPath $relativePath))
+            }
+
+            $rootFolder = ($relativePath -split '[\/]')[0]
+            if (-not [string]::IsNullOrWhiteSpace($rootFolder) -and -not [string]::IsNullOrWhiteSpace($downloadDir)) {
+                $possiblePaths.Add((Join-Path -Path $downloadDir -ChildPath $rootFolder))
+            }
+        }
+
+        $candidatePaths = @($possiblePaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+        if ($candidatePaths.Count -eq 0) {
+            return $true
+        }
+
+        $existingPaths = @($candidatePaths | Where-Object { Test-Path -LiteralPath $_ })
+        if ($existingPaths.Count -eq 0) {
+            Write-Log "Torrent source paths no longer exist for '$torrentName'; allowing torrent removal." -Level INFO
+            return $true
+        }
+
+        foreach ($path in $existingPaths) {
+            try {
+                if (Test-Path -LiteralPath $path -PathType Leaf) {
+                    return $false
+                }
+                if (Test-Path -LiteralPath $path -PathType Container) {
+                    $items = @(Get-ChildItem -LiteralPath $path -Force -ErrorAction SilentlyContinue)
+                    if ($items.Count -gt 0) {
+                        return $false
+                    }
+                }
+            }
+            catch {
+                Write-Log "Could not inspect path '$path' while checking torrent source emptiness: $($_.Exception.Message)" -Level WARN
+                return $false
+            }
+        }
+
+        Write-Log "Torrent source paths are empty for '$torrentName'; allowing torrent removal." -Level INFO
+        return $true
+    }
+    catch {
+        Write-Log "Failed to check whether torrent source data is absent or empty: $($_.Exception.Message)" -Level WARN
+        return $false
     }
 }
 
@@ -1117,294 +1956,219 @@ function Remove-Torrent {
     }
 }
 
+function Open-LogsFolder {
+    try {
+        if (-not (Test-Path -LiteralPath $script:LogsDir)) {
+            New-Item -ItemType Directory -Path $script:LogsDir -Force | Out-Null
+        }
+        Start-Process explorer.exe -ArgumentList "`"$($script:LogsDir)`""
+        Write-Log "Opened logs folder: $($script:LogsDir)" -Level INFO -NoConsole
+    }
+    catch {
+        Write-Log "Failed to open logs folder: $($_.Exception.Message)" -Level ERROR
+    }
+}
+
 function Install-Script {
-	# Set title for installation
     $host.UI.RawUI.WindowTitle = "Transmission Cleanup - Installation"
-    # Get the current script path
     $currentScript = Get-ScriptPath
-    Write-Log "Install-Script function | InstallDir = '$InstallDir'" -Level DEBUG -NoConsole
-    Write-Log "Current script path | currentScript = '$currentScript'" -Level DEBUG -NoConsole
-    Write-Log "Install-Script function | ScriptPath = '$ScriptPath'" -Level DEBUG -NoConsole
-    
-    # Create installation directory if it doesn't exist
-    if (-not (Test-Path $InstallDir)) {
-        try {
+
+    Write-Log "Install-Script | InstallDir = '$InstallDir'" -Level DEBUG -NoConsole
+    Write-Log "Install-Script | ScriptPath = '$ScriptPath'" -Level DEBUG -NoConsole
+    Write-Log "Install-Script | CurrentScript = '$currentScript'" -Level DEBUG -NoConsole
+
+    try {
+        if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+            throw "InstallDir is empty."
+        }
+        if (-not (Test-Path -LiteralPath $InstallDir)) {
             New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
             Write-Log "Created installation directory: $InstallDir" -Level INFO -NoConsole
         }
-        catch {
-            Write-Log "Failed to create installation directory: $($_.Exception.Message)" -Level ERROR
-            Write-Host "✗ Failed to create installation directory: $($_.Exception.Message)" -ForegroundColor Red
-            return $false
+        if (-not (Test-Path -LiteralPath $script:LogsDir)) {
+            New-Item -ItemType Directory -Path $script:LogsDir -Force | Out-Null
+            Write-Log "Created logs directory: $($script:LogsDir)" -Level INFO -NoConsole
         }
     }
-    
-    # Copy the script to the installation directory
+    catch {
+        Write-Log "Failed to prepare installation directory: $($_.Exception.Message)" -Level ERROR
+        Write-Host "Failed to prepare installation directory: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+
     try {
-        Write-Log "Copying script to installation directory | ScriptPath = '$ScriptPath'" -Level DEBUG -NoConsole
-        
-        if ($null -ne $currentScript -and (Test-Path $currentScript)) {
-            Copy-Item -Path $currentScript -Destination $ScriptPath -Force
+        if ([string]::IsNullOrWhiteSpace($currentScript) -or -not (Test-Path -LiteralPath $currentScript)) {
+            throw "Could not determine the current script path."
+        }
+
+        if ($currentScript -ne $ScriptPath) {
+            Copy-Item -LiteralPath $currentScript -Destination $ScriptPath -Force
             Write-Log "Copied script to: $ScriptPath" -Level INFO -NoConsole
         }
         else {
-            # If we can't determine the script path, create it directly
-            Write-Log "Creating script directly in destination" -Level WARN -NoConsole
-            
-            # Get the content of the current script
-            $scriptContent = Get-Content -Path $MyInvocation.ScriptName -Raw -ErrorAction SilentlyContinue
-            
-            if ([string]::IsNullOrEmpty($scriptContent)) {
-                # Create a minimal script if we can't get the content
-                $scriptContent = @"
-<#
-.SYNOPSIS
-    Transmission Auto-Cleanup with Full Automation
-.DESCRIPTION
-    This is a placeholder script created during installation.
-    Please reinstall the script properly.
-#>
-
-Write-Host "This is a placeholder script. Please reinstall Transmission Cleanup properly." -ForegroundColor Red
-"@
-            }
-            
-            # Write the content to the destination
-            Set-Content -Path $ScriptPath -Value $scriptContent -Force
+            Write-Log "Script is already running from install path." -Level INFO -NoConsole
         }
     }
     catch {
         Write-Log "Failed to copy script: $($_.Exception.Message)" -Level ERROR
-        Write-Log "Failed to copy script | Exception = '$($_.Exception.Message)'" -Level DEBUG -NoConsole
-        Write-Host "✗ Failed to copy script: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Failed to copy script: $($_.Exception.Message)" -ForegroundColor Red
         return $false
     }
-    
-    # Create the help file
+
     try {
-        $helpContent = @"
-=== TRANSMISSION CLEANUP HELP ===
-
-OVERVIEW
---------
-Transmission Cleanup is a utility that automatically organizes completed torrents from Transmission into category folders.
-It can be run manually or scheduled to run automatically at specified times.
-
-FEATURES
---------
-- Automatically organizes completed torrents into category folders (Apps, Media, Music, Archives, Other)
-- Removes torrents from Transmission after organizing (keeps downloaded files)
-- Scheduled task for automatic cleanup
-- Secure credential storage for Transmission RPC access
-
-CONFIGURATION
-------------
-- RPC URL: The URL to connect to Transmission's RPC interface (default: http://localhost:9091/transmission/rpc)
-- Download Folder: The main folder where torrents are downloaded
-- Category Folders: Subfolders for organizing files by type
-- Schedule: When the automatic cleanup should run
-
-SCHEDULED TASK HISTORY
----------------------
-Task history may be disabled by default in Windows Task Scheduler. To enable history:
-
-1. Using Task Scheduler GUI:
-   a. Open Task Scheduler (taskschd.msc)
-   b. Go to Task Scheduler Library
-   c. Find the "Transmission Cleanup" task
-   d. Right-click and select "Properties"
-   e. Go to the "History" tab
-   f. Click "Enable All Tasks History" in the right panel
-
-2. Using Command Line:
-   Open an elevated Command Prompt and run:
-   wevtutil set-log Microsoft-Windows-TaskScheduler/Operational /enabled:true
-
-Enabling history allows you to track when the cleanup task ran and whether it completed successfully.
-
-SHORTCUTS
----------
-The following shortcuts are created in the Start Menu:
-- Run Cleanup: Manually runs the cleanup process
-- Reset Credentials: Resets the stored Transmission credentials
-- View Log File: Opens the log file in Notepad
-- Help: Opens this help file
-- Uninstall: Completely removes Transmission Cleanup
-
-TROUBLESHOOTING
---------------
-- Check the log file for detailed error messages
-- Verify Transmission is running and accessible
-- Ensure your credentials are correct
-- Check Task Scheduler for errors if scheduled tasks aren't running
-- Make sure the download folder exists and is accessible
-
-For additional help, please contact the script author.
-"@
-        
-        Set-Content -Path $HelpFile -Value $helpContent -Force
+        $helpLines = @(
+            '=== TRANSMISSION CLEANUP HELP ===',
+            '',
+            'OVERVIEW',
+            '--------',
+            'Transmission Cleanup automatically organizes completed torrents into category folders.',
+            'It can be run manually or on a schedule.',
+            '',
+            'FEATURES',
+            '--------',
+            '- Self-install to AppData\Transmission',
+            '- Start Menu shortcuts',
+            '- Local credential storage',
+            '- Category folders: Apps, Videos, Music, Archives, Other',
+            '- Scheduled task support',
+            '- Cleanup and uninstall options',
+            '',
+            'NOTES',
+            '-----',
+            '- Enter your Transmission web URL or RPC URL when prompted.',
+            '- /transmission/web/ is normalized to /transmission/rpc automatically.',
+            '- Check the log file if something fails.'
+        )
+        Set-Content -LiteralPath $HelpFile -Value $helpLines -Force
         Write-Log "Created help file: $HelpFile" -Level INFO -NoConsole
     }
     catch {
         Write-Log "Failed to create help file: $($_.Exception.Message)" -Level WARN -NoConsole
-        # Non-critical error, continue with installation
     }
-    
-    # Create Start Menu shortcuts
+
     try {
-        # Create the Start Menu folder if it doesn't exist
-        if (-not (Test-Path $shortcutFolder)) {
+        if (-not (Test-Path -LiteralPath $shortcutFolder)) {
             New-Item -ItemType Directory -Path $shortcutFolder -Force | Out-Null
         }
-        
-        # Define icon locations
+
         $shell32 = "$env:SystemRoot\System32\shell32.dll"
         $imageres = "$env:SystemRoot\System32\imageres.dll"
-        
-        # Create the Run Cleanup shortcut with icon
-        $runShortcutPath = Join-Path -Path $shortcutFolder -ChildPath "Run Cleanup.lnk"
-        New-Shortcut -Path $runShortcutPath `
-                    -TargetPath "powershell.exe" `
-                    -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -RunOnly" `
-                    -Description "Run Transmission Cleanup" `
-                    -WindowStyle "Normal" `
-                    -IconLocation "$imageres,109" `
-                    -RunAsAdmin $true
-        
-        # Create the Reset Credentials shortcut with icon
-        $resetShortcutPath = Join-Path -Path $shortcutFolder -ChildPath "Reset Credentials.lnk"
-        New-Shortcut -Path $resetShortcutPath `
-                    -TargetPath "powershell.exe" `
-                    -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -Reinitialize" `
-                    -Description "Reset Transmission Credentials" `
-                    -WindowStyle "Normal" `
-                    -IconLocation "$shell32,235" `
-                    -RunAsAdmin $true
-        
-        # Create the View Log shortcut with icon
-        $logShortcutPath = Join-Path -Path $shortcutFolder -ChildPath "View Log File.lnk"
-        New-Shortcut -Path $logShortcutPath `
-                    -TargetPath "notepad.exe" `
-                    -Arguments "`"$($script:config.LogFile)`"" `
-                    -Description "View Transmission Cleanup Log" `
-                    -WindowStyle "Normal" `
-                    -IconLocation "$shell32,70" `
-                    -RunAsAdmin $false
-        
-        # Create the Help shortcut with icon
-        $helpShortcutPath = Join-Path -Path $shortcutFolder -ChildPath "Help.lnk"
-        New-Shortcut -Path $helpShortcutPath `
-                    -TargetPath "notepad.exe" `
-                    -Arguments "`"$HelpFile`"" `
-                    -Description "Transmission Cleanup Help" `
-                    -WindowStyle "Normal" `
-                    -IconLocation "$shell32,23" `
-                    -RunAsAdmin $false
-        
-        # Create the Uninstall shortcut with icon
-        $uninstallShortcutPath = Join-Path -Path $shortcutFolder -ChildPath "Uninstall.lnk"
-        New-Shortcut -Path $uninstallShortcutPath `
-                    -TargetPath "powershell.exe" `
-                    -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -Uninstall" `
-                    -Description "Uninstall Transmission Cleanup" `
-                    -WindowStyle "Normal" `
-                    -IconLocation "$imageres,99" `
-                    -RunAsAdmin $true
-        
-        Write-Log "Created Start Menu shortcuts with icons" -Level INFO -NoConsole
-        Write-Host "✓ Created Start Menu shortcuts with icons" -ForegroundColor Green
+
+        New-Shortcut -Path (Join-Path $shortcutFolder 'Run Cleanup.lnk') `
+            -TargetPath 'powershell.exe' `
+            -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -RunOnly" `
+            -Description 'Run Transmission Cleanup' `
+            -WindowStyle 'Normal' `
+            -IconLocation "$imageres,109" `
+            -RunAsAdmin $true
+
+        New-Shortcut -Path (Join-Path $shortcutFolder 'Reset Credentials.lnk') `
+            -TargetPath 'powershell.exe' `
+            -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -Reinitialize" `
+            -Description 'Reset Transmission Credentials' `
+            -WindowStyle 'Normal' `
+            -IconLocation "$shell32,235" `
+            -RunAsAdmin $true
+
+        New-Shortcut -Path (Join-Path $shortcutFolder 'View Log File.lnk') `
+            -TargetPath 'notepad.exe' `
+            -Arguments "`"$($script:config.LogFile)`"" `
+            -Description 'View Transmission Cleanup Log' `
+            -WindowStyle 'Normal' `
+            -IconLocation "$shell32,70" `
+            -RunAsAdmin $false
+
+        New-Shortcut -Path (Join-Path $shortcutFolder 'Open Logs Folder.lnk') `
+            -TargetPath 'explorer.exe' `
+            -Arguments "`"$($script:LogsDir)`"" `
+            -Description 'Open Transmission Cleanup Logs Folder' `
+            -WindowStyle 'Normal' `
+            -IconLocation "$shell32,4" `
+            -RunAsAdmin $false
+
+        New-Shortcut -Path (Join-Path $shortcutFolder 'Help.lnk') `
+            -TargetPath 'notepad.exe' `
+            -Arguments "`"$HelpFile`"" `
+            -Description 'Transmission Cleanup Help' `
+            -WindowStyle 'Normal' `
+            -IconLocation "$shell32,23" `
+            -RunAsAdmin $false
+
+        New-Shortcut -Path (Join-Path $shortcutFolder 'Uninstall.lnk') `
+            -TargetPath 'powershell.exe' `
+            -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -Uninstall" `
+            -Description 'Uninstall Transmission Cleanup' `
+            -WindowStyle 'Normal' `
+            -IconLocation "$imageres,99" `
+            -RunAsAdmin $true
+
+        Write-Log "Created Start Menu shortcuts" -Level INFO -NoConsole
+        Write-Host "Created Start Menu shortcuts." -ForegroundColor Green
     }
     catch {
         Write-Log "Failed to create shortcuts: $($_.Exception.Message)" -Level ERROR
-        Write-Host "✗ Failed to create shortcuts: $($_.Exception.Message)" -ForegroundColor Red
-        # Non-critical error, continue with installation
+        Write-Host "Failed to create shortcuts: $($_.Exception.Message)" -ForegroundColor Red
     }
-    
-    # Create scheduled task
+
     try {
-        # REMOVED RPC URL prompt from installation
-        # $script:config.RpcUrl = Get-RpcUrlInput -DefaultUrl $script:config.RpcUrl
-        # Write-Host "Using RPC URL: $($script:config.RpcUrl)" -ForegroundColor Green
-        
         Write-Host "`n=== DOWNLOAD FOLDER CONFIGURATION ===" -ForegroundColor Cyan
-        # Prompt for download folder during initial installation
-        $newFolder = Get-FolderSelection -Prompt "Select the main folder where Transmission downloads torrents" -DefaultPath $script:config.DownloadFolder
-        if ($newFolder -ne $script:config.DownloadFolder) {
-            $script:config.DownloadFolder = $newFolder
-            
-            # Update subfolder paths
-            $script:config.AppsFolder = Join-Path -Path $newFolder -ChildPath "Apps"
-            $script:config.MediaFolder = Join-Path -Path $newFolder -ChildPath "Media"
-            $script:config.MusicFolder = Join-Path -Path $newFolder -ChildPath "Music"
-            $script:config.ArchiveFolder = Join-Path -Path $newFolder -ChildPath "Archives"
-            $script:config.OtherFolder = Join-Path -Path $newFolder -ChildPath "Other"
-            
-            Write-Host "Download folder set to: $newFolder" -ForegroundColor Green
+        $folderResult = Get-FolderSelection -Prompt "Select the main folder where Transmission downloads torrents" -DefaultPath $script:config.DownloadFolder -AllowCancel
+        if ($folderResult.Cancelled) {
+            Write-Host "Folder selection was cancelled. Installation aborted." -ForegroundColor Red
+            Write-Log "Installation cancelled by user during folder selection." -Level WARN
+            Wait-ForKeyPress
+            return $false
         }
-        
+
+        if ($folderResult.Path) {
+            $script:config.DownloadFolder = $folderResult.Path
+            $script:config.AppsFolder = Join-Path $folderResult.Path 'Apps'
+            $script:config.VideosFolder = Join-Path $folderResult.Path 'Videos'
+            $script:config.MusicFolder = Join-Path $folderResult.Path 'Music'
+            $script:config.ArchiveFolder = Join-Path $folderResult.Path 'Archives'
+            $script:config.OtherFolder = Join-Path $folderResult.Path 'Other'
+        }
+
         Write-Host "`n=== SCHEDULE CONFIGURATION ===" -ForegroundColor Cyan
-        
-        # Get schedule time
         $scheduleTime = Get-TimeInput
-        $script:config.ScheduleTime = $scheduleTime
-        
-        # Get schedule type (daily/weekly)
         $scheduleConfig = Get-ScheduleType
+        $script:config.ScheduleTime = $scheduleTime
         $script:config.ScheduleType = $scheduleConfig.Type
         $script:config.ScheduleDays = $scheduleConfig.Days
-        
-        # Get delete original folders preference
         $script:config.DeleteOriginalFolders = Get-DeleteOriginalFolderPreference
-        
-        # Save configuration
         $script:config | Export-Clixml -Path $ConfigFile
-        
-        # Create the scheduled task
-        $taskName = "Transmission Cleanup"
-        $taskDescription = "Automatically organizes completed torrents from Transmission"
-        $taskCommand = "powershell.exe"
+
+        $taskName = 'Transmission Cleanup'
+        $taskDescription = 'Automatically organizes completed torrents from Transmission'
+        $taskCommand = 'powershell.exe'
         $taskArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -RunOnly"
-        
-        # Remove existing task if it exists
+
         $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
         if ($null -ne $existingTask) {
             Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
         }
-        
-        # Create the task action
+
         $action = New-ScheduledTaskAction -Execute $taskCommand -Argument $taskArgs
-        
-        # Create the task trigger based on schedule type
-        if ($script:config.ScheduleType -eq "Weekly" -and $script:config.ScheduleDays.Count -gt 0) {
-            # Convert day names to DaysOfWeek enum values
-            $daysOfWeek = $script:config.ScheduleDays | ForEach-Object {
-                [System.DayOfWeek]::$_
-            }
-            
+        if ($script:config.ScheduleType -eq 'Weekly' -and $script:config.ScheduleDays.Count -gt 0) {
+            $daysOfWeek = $script:config.ScheduleDays | ForEach-Object { [System.DayOfWeek]::$_ }
             $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $daysOfWeek -At $script:config.ScheduleTime
         }
         else {
             $trigger = New-ScheduledTaskTrigger -Daily -At $script:config.ScheduleTime
         }
-        
-        # Create the task settings
+
         $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -AllowStartIfOnBatteries
-        
-        # Create the task principal (run with highest privileges)
         $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType S4U -RunLevel Highest
-        
-        # Register the scheduled task
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description $taskDescription -Force | Out-Null
-        
+
         Write-Log "Created scheduled task: $taskName" -Level INFO -NoConsole
-        Write-Host "✓ Scheduled task created successfully!" -ForegroundColor Green
+        Write-Host "Scheduled task created successfully." -ForegroundColor Green
     }
     catch {
         Write-Log "Failed to create scheduled task: $($_.Exception.Message)" -Level ERROR
-        Write-Host "✗ Failed to create scheduled task: $($_.Exception.Message)" -ForegroundColor Red
-        # Non-critical error, continue with installation
+        Write-Host "Failed to create scheduled task: $($_.Exception.Message)" -ForegroundColor Red
     }
-    
+
     return $true
 }
 
@@ -1414,8 +2178,10 @@ function Uninstall-Script {
     Write-Host "`n=== TRANSMISSION CLEANUP UNINSTALLATION ===" -ForegroundColor Cyan
     
     # Redirect logs to desktop during uninstallation
-    $desktopPath = [Environment]::GetFolderPath("Desktop")
-    $uninstallLogFile = Join-Path -Path $desktopPath -ChildPath "TransmissionCleanupUninstall.log"
+    if (-not (Test-Path -LiteralPath $script:LogsDir)) {
+        New-Item -ItemType Directory -Path $script:LogsDir -Force | Out-Null
+    }
+    $uninstallLogFile = Join-Path -Path $script:LogsDir -ChildPath "TransmissionCleanupUninstall.log"
     
     Write-Log "Starting uninstallation process" -Level INFO -LogFile $uninstallLogFile -NoConsole
     
@@ -1524,6 +2290,7 @@ function Start-Cleanup {
         Write-Host "✗ Failed to get torrent list" -ForegroundColor Red
         return
     }
+    $torrents = @($torrents)
     
     $completedTorrents = Get-CompletedTorrents -Torrents $torrents -Credential $cred
     if ($completedTorrents.Count -eq 0) {
@@ -1545,8 +2312,22 @@ function Start-Cleanup {
         # Organize files
         $result = Organize-Files -Torrent $torrent -WhatIf:$WhatIf
         
-        if ($result.Organized.Count -gt 0) {
-            Write-Log "Successfully organized $($result.Organized.Count) files" -Level INFO
+        Write-Log "Torrent: $torrentName - Kept: $($result.Kept.Count), Deleted: $($result.Deleted.Count), Failed: $($result.Failed.Count)" -Level INFO
+        
+        $touchedCount = @($result.Organized).Count + @($result.Kept).Count + @($result.Deleted).Count
+        $sourceGoneOrEmpty = Test-TorrentDataAbsentOrEmpty -Torrent $torrent
+        $canRemoveTorrent = (($sourceGoneOrEmpty) -or (($touchedCount -gt 0) -and @($result.Failed).Count -eq 0))
+
+        if ($canRemoveTorrent) {
+            if ($sourceGoneOrEmpty -and $touchedCount -eq 0) {
+                Write-Log "Torrent source is missing or empty, so the torrent will still be removed from Transmission." -Level INFO
+                if (@($result.Failed).Count -gt 0) {
+                    Write-Log "Ignoring source-missing file failures because the torrent source path no longer exists or is empty." -Level WARN
+                }
+            }
+            else {
+                Write-Log "Torrent processed successfully. Organized: $($result.Organized.Count), Kept: $($result.Kept.Count), Deleted: $($result.Deleted.Count)" -Level INFO
+            }
             
             # Remove torrent from Transmission (keep local data)
             if (-not $WhatIf) {
@@ -1566,7 +2347,7 @@ function Start-Cleanup {
             }
         }
         else {
-            Write-Log "No files were organized for torrent: $torrentName" -Level WARN
+            Write-Log "Torrent not removed. Touched: $touchedCount, SourceGoneOrEmpty: $sourceGoneOrEmpty, Failed: $(@($result.Failed).Count)" -Level WARN
             $totalFailed++
         }
         
@@ -1585,14 +2366,219 @@ function Start-Cleanup {
 
 #region MAIN EXECUTION
 
-# Ensure log directory exists
-$logParent = Split-Path -Path $script:config.LogFile -Parent
-if (-not (Test-Path $logParent)) {
-    New-Item -ItemType Directory -Path $logParent -Force | Out-Null
+
+function Get-EmbeddedScriptVersion {
+    param(
+        [string]$Path
+    )
+
+    try {
+        if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+            return $null
+        }
+
+        $head = Get-Content -LiteralPath $Path -TotalCount 120 -ErrorAction Stop
+        foreach ($line in $head) {
+            if ($line -match '^\s*\$ScriptVersion\s*=\s*"([^"]+)"') {
+                return $Matches[1]
+            }
+        }
+
+        foreach ($line in $head) {
+            if ($line -match '^\s*Version:\s*([0-9][0-9A-Za-z\.\-_]*)') {
+                return $Matches[1]
+            }
+        }
+
+        return $null
+    }
+    catch {
+        Write-Log "Could not read embedded script version from '$Path': $($_.Exception.Message)" -Level WARN -NoConsole
+        return $null
+    }
 }
+
+function Sync-InstalledScript {
+    param(
+        [switch]$NoConsole
+    )
+
+    try {
+        $currentScript = Get-ScriptPath
+
+        if ([string]::IsNullOrWhiteSpace($currentScript) -or -not (Test-Path -LiteralPath $currentScript)) {
+            Write-Log "Sync-InstalledScript skipped: current script path could not be determined." -Level WARN -NoConsole:$NoConsole
+            return $false
+        }
+
+        if ([string]::IsNullOrWhiteSpace($ScriptPath)) {
+            Write-Log "Sync-InstalledScript skipped: install ScriptPath is empty." -Level WARN -NoConsole:$NoConsole
+            return $false
+        }
+
+        if ($currentScript -eq $ScriptPath) {
+            Write-Log "Sync-InstalledScript: already running from installed path. Version $ScriptVersion." -Level DEBUG -NoConsole:$NoConsole
+            return $true
+        }
+
+        if (-not (Test-Path -LiteralPath $InstallDir)) {
+            New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+            Write-Log "Created install directory during sync: $InstallDir" -Level INFO -NoConsole:$NoConsole
+        }
+
+        $installedExists = Test-Path -LiteralPath $ScriptPath
+        $updateRequired = $true
+        $reason = "Fresh install copy required"
+
+        if ($installedExists) {
+            $sourceVersionText = Get-EmbeddedScriptVersion -Path $currentScript
+            $installedVersionText = Get-EmbeddedScriptVersion -Path $ScriptPath
+            $sourceVersion = $null
+            $installedVersion = $null
+
+            if (-not [string]::IsNullOrWhiteSpace($sourceVersionText)) {
+                try { $sourceVersion = [version]$sourceVersionText } catch {}
+            }
+            if (-not [string]::IsNullOrWhiteSpace($installedVersionText)) {
+                try { $installedVersion = [version]$installedVersionText } catch {}
+            }
+
+            if ($sourceVersion -and $installedVersion) {
+                if ($sourceVersion -gt $installedVersion) {
+                    $updateRequired = $true
+                    $reason = "Version upgrade $installedVersionText -> $sourceVersionText"
+                }
+                elseif ($sourceVersion -eq $installedVersion) {
+                    $srcTime = (Get-Item -LiteralPath $currentScript).LastWriteTimeUtc
+                    $dstTime = (Get-Item -LiteralPath $ScriptPath).LastWriteTimeUtc
+                    if ($srcTime -gt $dstTime) {
+                        $updateRequired = $true
+                        $reason = "Same version $sourceVersionText but newer file date"
+                    }
+                    else {
+                        $updateRequired = $false
+                        $reason = "Already up to date (version $sourceVersionText)"
+                    }
+                }
+                else {
+                    $updateRequired = $false
+                    $reason = "Installed version $installedVersionText is newer than current file version $sourceVersionText"
+                }
+            }
+            else {
+                try {
+                    $srcItem = Get-Item -LiteralPath $currentScript -ErrorAction Stop
+                    $dstItem = Get-Item -LiteralPath $ScriptPath -ErrorAction Stop
+                    if ($srcItem.LastWriteTimeUtc -gt $dstItem.LastWriteTimeUtc) {
+                        $updateRequired = $true
+                        $reason = "Newer source file date detected"
+                    }
+                    else {
+                        $updateRequired = $false
+                        $reason = "Already up to date (file date check)"
+                    }
+                }
+                catch {
+                    $updateRequired = $true
+                    $reason = "Unable to compare dates cleanly; forcing refresh"
+                }
+            }
+        }
+
+        if (-not $updateRequired) {
+            Write-Log $reason -Level INFO -NoConsole:$NoConsole
+            if (-not $NoConsole) {
+                Write-Host "✓ $reason" -ForegroundColor Green
+            }
+            return $true
+        }
+
+        $backupPath = $null
+        if ($installedExists) {
+            $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+            $backupPath = Join-Path -Path $InstallDir -ChildPath ("TransmissionCleanup_backup_{0}.ps1" -f $stamp)
+            Copy-Item -LiteralPath $ScriptPath -Destination $backupPath -Force
+            Write-Log "Created backup of installed script: $backupPath" -Level INFO -NoConsole:$NoConsole
+
+            $stableBackup = Join-Path -Path $InstallDir -ChildPath "TransmissionCleanup_previous.ps1"
+            Copy-Item -LiteralPath $ScriptPath -Destination $stableBackup -Force
+            Write-Log "Updated rollback copy: $stableBackup" -Level DEBUG -NoConsole:$NoConsole
+        }
+
+        $tempPath = Join-Path -Path $InstallDir -ChildPath "TransmissionCleanup.update.tmp.ps1"
+        Copy-Item -LiteralPath $currentScript -Destination $tempPath -Force
+
+        $srcHash = (Get-FileHash -LiteralPath $currentScript -Algorithm SHA256).Hash
+        $tmpHash = (Get-FileHash -LiteralPath $tempPath -Algorithm SHA256).Hash
+        if ($srcHash -ne $tmpHash) {
+            throw "Temporary updated script failed hash verification."
+        }
+
+        Copy-Item -LiteralPath $tempPath -Destination $ScriptPath -Force
+
+        $dstHash = (Get-FileHash -LiteralPath $ScriptPath -Algorithm SHA256).Hash
+        if ($srcHash -ne $dstHash) {
+            throw "Installed script failed hash verification after copy."
+        }
+
+        Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+
+        Write-Log "Updated installed script copy: $ScriptPath ($reason)" -Level INFO -NoConsole:$NoConsole
+        if (-not $NoConsole) {
+            Write-Host "✓ Updated installed script copy." -ForegroundColor Green
+        }
+
+        return $true
+    }
+    catch {
+        $syncError = $_.Exception.Message
+        Write-Log "Failed to sync installed script copy: $syncError" -Level ERROR -NoConsole:$NoConsole
+
+        try {
+            $rollbackCandidate = Get-ChildItem -LiteralPath $InstallDir -Filter 'TransmissionCleanup_backup_*.ps1' -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 1
+
+            if (-not $rollbackCandidate) {
+                $stableRollback = Join-Path -Path $InstallDir -ChildPath 'TransmissionCleanup_previous.ps1'
+                if (Test-Path -LiteralPath $stableRollback) {
+                    $rollbackCandidate = Get-Item -LiteralPath $stableRollback -ErrorAction Stop
+                }
+            }
+
+            if ($rollbackCandidate -and (Test-Path -LiteralPath $rollbackCandidate.FullName)) {
+                Copy-Item -LiteralPath $rollbackCandidate.FullName -Destination $ScriptPath -Force
+                Write-Log "Rolled back installed script using backup: $($rollbackCandidate.FullName)" -Level WARN -NoConsole:$NoConsole
+            }
+        }
+        catch {
+            Write-Log "Rollback attempt failed: $($_.Exception.Message)" -Level ERROR -NoConsole:$NoConsole
+        }
+
+        try {
+            $tempPath = Join-Path -Path $InstallDir -ChildPath "TransmissionCleanup.update.tmp.ps1"
+            if (Test-Path -LiteralPath $tempPath) {
+                Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+        catch {}
+
+        if (-not $NoConsole) {
+            Write-Host "Failed to update installed script copy: $syncError" -ForegroundColor Yellow
+        }
+        return $false
+    }
+}
+
 
 # Main execution logic
 try {
+    Write-ErrorToFile "Main execution started - Parameters: Uninstall=$Uninstall, RunOnly=$RunOnly, Reinitialize=$Reinitialize"
+    
+    if (-not $Uninstall) {
+        Sync-InstalledScript -NoConsole:$RunOnly | Out-Null
+    }
+    
     if ($Uninstall) {
         $success = Uninstall-Script
         if (-not $success) {
@@ -1614,8 +2600,82 @@ try {
         # Wait-ForKeyPress is now called inside Reset-TransmissionCredential
     }
     else {
-        # Installation
+        $currentScript = Get-ScriptPath
+        $isInstalled = (Test-Path -LiteralPath $ScriptPath) -and (Test-Path -LiteralPath $ConfigFile)
+
+        if ($isInstalled -and $currentScript -ne $ScriptPath) {
+            Write-Host "=== TRANSMISSION CLEANUP UPDATE ===" -ForegroundColor Cyan
+            Write-Host "An existing installed copy was found in AppData." -ForegroundColor White
+            Write-Host "This run has refreshed the installed script so scheduled tasks and shortcuts use the updated version." -ForegroundColor White
+            Write-Host "" 
+
+            $choices = @(
+                (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&Run Cleanup', 'Run cleanup now using current settings'),
+                (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList 'Re&configure', 'Open the full install/reconfigure wizard'),
+                (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList 'Open &Logs Folder', 'Open the Transmission Cleanup logs folder'),
+                (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList 'E&xit', 'Exit now')
+            )
+
+            $result = $host.UI.PromptForChoice("Installed copy updated", "What would you like to do next?", $choices, 0)
+
+            if ($result -eq 0) {
+                Start-Cleanup
+                Wait-ForKeyPress
+                exit 0
+            }
+            elseif ($result -eq 2) {
+                Open-LogsFolder
+                Wait-ForKeyPress
+                exit 0
+            }
+            elseif ($result -eq 3) {
+                Wait-ForKeyPress
+                exit 0
+            }
+        }
+
+        # Installation confirmation
         Write-Host "=== TRANSMISSION CLEANUP INSTALLATION ===" -ForegroundColor Cyan
+        Write-Host "This script will install Transmission Cleanup to organize your torrent downloads." -ForegroundColor White
+        Write-Host ""
+        Write-Host "What it will do:" -ForegroundColor Yellow
+        Write-Host "• Install the script to %AppData%\Transmission\AutoCleanup" -ForegroundColor White
+        Write-Host "• Create Start Menu shortcuts" -ForegroundColor White
+        Write-Host "• Set up a scheduled task for automatic cleanup" -ForegroundColor White
+        Write-Host "• Prompt for download folder configuration" -ForegroundColor White
+        Write-Host "• Ask for Transmission RPC credentials" -ForegroundColor White
+        Write-Host ""
+        
+        $choices = @(
+            (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&Yes', 'Continue with installation'),
+            (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&No', 'Cancel and exit')
+        )
+        
+        $result = $host.UI.PromptForChoice("Continue Installation?", "Do you want to proceed with the installation?", $choices, 0)
+        
+        Write-DebugLog "User choice result: $result" # Debug output
+        
+        if ($result -ne 0) {
+            Write-Host "✗ Installation cancelled by user." -ForegroundColor Yellow
+            Write-DebugLog "Installation cancelled - exiting with code 0"
+            
+            # Don't create any log files if user cancelled
+            try {
+                Write-Host "Installation was cancelled before any files were created." -ForegroundColor Green
+            } catch {}
+            
+            Wait-ForKeyPress "Press any key to exit..."
+            exit 0
+        }
+        
+        Write-Host "✓ Proceeding with installation..." -ForegroundColor Green
+        Write-Host ""
+        
+        # Now ensure log directory exists (only after user confirms installation)
+        $logParent = Split-Path -Path $script:config.LogFile -Parent
+        if (-not (Test-Path $logParent)) {
+            New-Item -ItemType Directory -Path $logParent -Force | Out-Null
+        }
         
         $success = Install-Script
         if ($success) {
@@ -1629,10 +2689,22 @@ try {
                 }
             }
             
+            # Offer a connection test before cleanup / exit
+            if (Test-Path $CredentialFile) {
+                try {
+                    $credToTest = Import-Clixml -Path $CredentialFile
+                }
+                catch {
+                    $credToTest = $null
+                }
+                Prompt-TransmissionConnectionTest -Credential $credToTest -RpcUrl $script:config.RpcUrl | Out-Null
+            }
+
             # Ask if user wants to run cleanup now
             $choices = @(
-                [System.Management.Automation.Host.ChoiceDescription]::new("&Yes", "Run cleanup now"),
-                [System.Management.Automation.Host.ChoiceDescription]::new("&No", "Exit without running cleanup")
+                (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&Yes', 'Run cleanup now'),
+                (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList 'Open &Logs Folder', 'Open the Transmission Cleanup logs folder'),
+                (New-Object System.Management.Automation.Host.ChoiceDescription -ArgumentList '&No', 'Exit without running cleanup')
             )
             
             $result = $host.UI.PromptForChoice("Run Cleanup Now", "Would you like to run the cleanup process now?", $choices, 0)
@@ -1641,6 +2713,10 @@ try {
                 Start-Cleanup
                 
                 # Add an extra pause after cleanup to prevent window from closing immediately
+                Wait-ForKeyPress
+            }
+            elseif ($result -eq 1) {
+                Open-LogsFolder
                 Wait-ForKeyPress
             }
             else {
@@ -1657,13 +2733,21 @@ try {
     }
 }
 catch {
-    Write-Log "Unhandled exception: $($_.Exception.Message)" -Level ERROR
+    $errorMsg = "Unhandled exception: $($_.Exception.Message)"
+    Write-ErrorToFile "MAIN EXECUTION ERROR: $errorMsg"
+    Write-ErrorToFile "Stack Trace: $($_.Exception.StackTrace)"
+    
+    try {
+        Write-Log $errorMsg -Level ERROR
+    } catch {
+        Write-ErrorToFile "Failed to write to main log: $($_.Exception.Message)"
+    }
+    
     Write-Host "✗ An error occurred: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Error details logged to: $errorLogPath" -ForegroundColor Yellow
     
     # Wait for key press before exiting
     Wait-ForKeyPress
 }
 
 #endregion
-
-
